@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edgemetry — tracker test page</title>
+<style>
+  body { margin:0; padding:40px 24px; font:16px/1.6 ui-sans-serif, system-ui, sans-serif;
+         max-width:640px; margin-inline:auto; color:#1a1a19; background:#fbfbfa; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  p.sub { margin:0 0 28px; color:#6b6b68; font-size:14px; }
+  nav { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px; }
+  button { font:inherit; font-size:14px; padding:8px 12px; border:1px solid #e3e3e0;
+           background:#fff; border-radius:8px; cursor:pointer; }
+  button:hover { border-color:#2f6f4e; }
+  code { background:#f0f0ec; padding:2px 5px; border-radius:4px; font-size:13px; }
+  .note { font-size:13.5px; color:#6b6b68; border-left:3px solid #e3e3e0; padding-left:12px; }
+</style>
+
+<!--
+  Open this file over http, not file:// — the tracker ignores file:// pages.
+  From the repo root:  npx serve scripts    (or any static server)
+
+  data-local="true" is what makes the tracker report from localhost. Remove it
+  on a real site; it exists so local testing works at all.
+-->
+<script defer src="http://localhost:8787/em.js" data-domain="example.com" data-local="true"></script>
+</head>
+<body>
+  <h1>Edgemetry tracker test page</h1>
+  <p class="sub">Every button below fires a real event at your local instance.</p>
+
+  <nav>
+    <button onclick="history.pushState({}, '', '/pricing')">Go to /pricing</button>
+    <button onclick="history.pushState({}, '', '/docs')">Go to /docs</button>
+    <button onclick="history.pushState({}, '', '/blog/hello')">Go to /blog/hello</button>
+    <button onclick="history.back()">Back</button>
+  </nav>
+
+  <nav>
+    <button onclick="edgemetry('signup')">Fire custom event: signup</button>
+    <button onclick="edgemetry('purchase')">Fire custom event: purchase</button>
+  </nav>
+
+  <p class="note">
+    The navigation buttons use <code>history.pushState</code>, which is how a single-page
+    app changes route — the tracker patches it and reports a pageview, so this also
+    checks SPA support. Watch the <strong>Last hour</strong> counter on the dashboard.
+  </p>
+</body>
+</html>

@@ -1,0 +1,222 @@
+/**
+ * Rollups.
+ *
+ * Two crons:
+ *   :05 every hour — fold the hour that just finished into stats_hourly, and
+ *                    refresh today's running exact visitor count.
+ *   00:20 daily    — fold every finished day into stats_daily, then DROP its
+ *                    raw tables. Dropping is what keeps the write budget small.
+ *
+ * Both are idempotent and self-healing: a missed run is repaired by the next
+ * one, because the daily pass re-rolls every raw table it can still find rather
+ * than trusting that the hourly pass ran.
+ */
+
+import {
+  dropTables,
+  listRawTables,
+  rawTable,
+  rawTablesForDay,
+} from './db';
+import { DIMENSIONS } from './dimensions';
+import { dayOffset, partsFor, partsForTs } from './time';
+import { pruneSalts } from './visitor';
+
+const HOURLY_UPSERT = `ON CONFLICT(site_id, hour, dim, val) DO UPDATE SET
+   pageviews = excluded.pageviews, visitors = excluded.visitors`;
+
+const DAILY_UPSERT = `ON CONFLICT(site_id, day, dim, val) DO UPDATE SET
+   pageviews = excluded.pageviews, visitors = excluded.visitors`;
+
+/** Statements that fold one raw hour table into stats_hourly. */
+function hourStatements(db: D1Database, table: string, hour: string): D1PreparedStatement[] {
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO stats_hourly (site_id, hour, dim, val, pageviews, visitors)
+         SELECT site_id, ?, '_total', '', COUNT(*), COUNT(DISTINCT visitor)
+         FROM ${table} WHERE name = 'pageview'
+         GROUP BY site_id
+         ${HOURLY_UPSERT}`,
+      )
+      .bind(hour),
+    db
+      .prepare(
+        `INSERT INTO stats_hourly (site_id, hour, dim, val, pageviews, visitors)
+         SELECT site_id, ?, 'event', name, COUNT(*), COUNT(DISTINCT visitor)
+         FROM ${table} WHERE name <> 'pageview'
+         GROUP BY site_id, name
+         ${HOURLY_UPSERT}`,
+      )
+      .bind(hour),
+  ];
+
+  for (const { dim, column } of DIMENSIONS) {
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO stats_hourly (site_id, hour, dim, val, pageviews, visitors)
+           SELECT site_id, ?, ?, ${column}, COUNT(*), COUNT(DISTINCT visitor)
+           FROM ${table} WHERE name = 'pageview' AND ${column} <> ''
+           GROUP BY site_id, ${column}
+           ${HOURLY_UPSERT}`,
+        )
+        .bind(hour, dim),
+    );
+  }
+
+  return statements;
+}
+
+function hourOfTable(table: string): string {
+  const suffix = table.slice(3);
+  return `${suffix.slice(0, 4)}-${suffix.slice(4, 6)}-${suffix.slice(6, 8)}T${suffix.slice(8, 10)}`;
+}
+
+async function runInChunks(db: D1Database, statements: D1PreparedStatement[]): Promise<void> {
+  const CHUNK = 20;
+  for (let i = 0; i < statements.length; i += CHUNK) {
+    await db.batch(statements.slice(i, i + CHUNK));
+  }
+}
+
+export async function rollupHour(db: D1Database, table: string): Promise<void> {
+  await runInChunks(db, hourStatements(db, table, hourOfTable(table)));
+}
+
+/**
+ * Exact distinct visitors for a day, computed across that day's raw tables.
+ *
+ * This cannot be derived by summing hourly rollups — a visitor who reads two
+ * pages an hour apart is distinct in each hour and would be counted twice. So
+ * the totals row is always recomputed from raw rows while they still exist.
+ */
+async function writeExactDailyTotals(
+  db: D1Database,
+  day: string,
+  tables: string[],
+): Promise<void> {
+  if (tables.length === 0) return;
+
+  const union = tables
+    .map((t) => `SELECT site_id, visitor FROM ${t} WHERE name = 'pageview'`)
+    .join(' UNION ALL ');
+
+  await db
+    .prepare(
+      `INSERT INTO stats_daily (site_id, day, dim, val, pageviews, visitors)
+       SELECT site_id, ?, '_total', '', COUNT(*), COUNT(DISTINCT visitor)
+       FROM (${union})
+       GROUP BY site_id
+       ${DAILY_UPSERT}`,
+    )
+    .bind(day)
+    .run();
+}
+
+/**
+ * Fold one finished day into stats_daily.
+ *
+ * Per-dimension visitor counts are summed from the hourly rollups and are
+ * therefore an upper bound, exactly as in Plausible and GoatCounter. The
+ * headline totals row is exact. The dashboard labels which is which.
+ */
+export async function rollupDay(db: D1Database, day: string): Promise<void> {
+  const tables = await rawTablesForDay(db, day);
+
+  // Re-roll every hour we still have, so a missed hourly cron cannot leave a
+  // gap in the permanent record.
+  for (const table of tables) {
+    await rollupHour(db, table);
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO stats_daily (site_id, day, dim, val, pageviews, visitors)
+       SELECT site_id, ?, dim, val, SUM(pageviews), SUM(visitors)
+       FROM stats_hourly
+       WHERE hour >= ? AND hour <= ? AND dim <> '_total'
+       GROUP BY site_id, dim, val
+       ${DAILY_UPSERT}`,
+    )
+    .bind(day, `${day}T00`, `${day}T23`)
+    .run();
+
+  await writeExactDailyTotals(db, day, tables);
+  await dropTables(db, tables);
+}
+
+/** Days that still have raw tables on disk, excluding today. */
+async function finishedDaysWithRawData(db: D1Database, today: string): Promise<string[]> {
+  const tables = await listRawTables(db);
+  const days = new Set<string>();
+  for (const table of tables) {
+    const suffix = table.slice(3);
+    const day = `${suffix.slice(0, 4)}-${suffix.slice(4, 6)}-${suffix.slice(6, 8)}`;
+    if (day < today) days.add(day);
+  }
+  return [...days].sort();
+}
+
+export async function hourlyJob(db: D1Database, now: Date): Promise<void> {
+  const previousHour = partsForTs(Math.floor(now.getTime() / 1000) - 3600);
+  const table = rawTable(previousHour.suffix);
+
+  const existing = await listRawTables(db);
+  if (existing.includes(table)) {
+    await rollupHour(db, table);
+  }
+
+  // Keep today's headline visitor count exact rather than letting it drift
+  // upward as an approximation until midnight. The hour currently being written
+  // to is left out — the dashboard adds it live, and counting it in both places
+  // would double it.
+  const today = partsFor(now).day;
+  const liveTable = rawTable(partsFor(now).suffix);
+  const finishedToday = (await rawTablesForDay(db, today)).filter((t) => t !== liveTable);
+  await writeExactDailyTotals(db, today, finishedToday);
+}
+
+/**
+ * Fold in any completed hour of today the cron has not picked up yet.
+ *
+ * Called on dashboard reads. Between :00 and :05 the hour that just ended is in
+ * neither stats_hourly nor the live table, so without this the dashboard would
+ * show traffic briefly disappearing every hour. It also means a failed or
+ * delayed cron self-repairs on the next page load — and that local development,
+ * where crons never fire at all, behaves the same as production.
+ */
+export async function catchUpToday(db: D1Database, now: Date): Promise<void> {
+  const { day: today, suffix } = partsFor(now);
+  const liveTable = rawTable(suffix);
+  const finished = (await rawTablesForDay(db, today)).filter((t) => t !== liveTable);
+  if (finished.length === 0) return;
+
+  const { results } = await db
+    .prepare('SELECT DISTINCT hour FROM stats_hourly WHERE hour BETWEEN ? AND ?')
+    .bind(`${today}T00`, `${today}T23`)
+    .all<{ hour: string }>();
+  const alreadyRolled = new Set(results.map((row) => row.hour));
+
+  const pending = finished.filter((table) => !alreadyRolled.has(hourOfTable(table)));
+  if (pending.length === 0) return;
+
+  for (const table of pending) {
+    await rollupHour(db, table);
+  }
+  await writeExactDailyTotals(db, today, finished);
+}
+
+export async function dailyJob(db: D1Database, now: Date, hourlyRetentionDays: number): Promise<void> {
+  const today = partsFor(now).day;
+
+  for (const day of await finishedDaysWithRawData(db, today)) {
+    await rollupDay(db, day);
+  }
+
+  const hourlyCutoff = dayOffset(now, -Math.max(1, hourlyRetentionDays));
+  await db.prepare('DELETE FROM stats_hourly WHERE hour < ?').bind(`${hourlyCutoff}T00`).run();
+
+  // Two days back: once a salt is gone, that day's hashes can never be recomputed.
+  await pruneSalts(db, dayOffset(now, -2));
+}

@@ -1,0 +1,204 @@
+/**
+ * Schema and storage helpers.
+ *
+ * The storage layout is shaped by two hard D1 free-tier limits: 100k rows
+ * written per day, where an UPDATE/DELETE costs as much as an INSERT and every
+ * secondary index adds another write per row.
+ *
+ * So:
+ *  - Raw events go into a per-hour table with no primary key and no indexes.
+ *    One pageview costs exactly one row written.
+ *  - Those tables are never DELETEd from. They are rolled up and then DROPped,
+ *    and DDL costs no rows written at all. Expiry is free.
+ *  - The rollup tables are WITHOUT ROWID, so the primary key *is* the table and
+ *    a rollup row costs one write instead of two.
+ *
+ * Net effect: ~1.2 rows written per pageview end to end, versus ~4 for the
+ * obvious "one events table plus a nightly DELETE" design.
+ */
+
+import { hourSuffixesForDay } from './time';
+
+/** Raw-event table suffixes are always generated internally, never from input. */
+const SUFFIX_PATTERN = /^\d{10}$/;
+
+export function rawTable(suffix: string): string {
+  if (!SUFFIX_PATTERN.test(suffix)) {
+    throw new Error(`refusing to build a table name from ${JSON.stringify(suffix)}`);
+  }
+  return `ev_${suffix}`;
+}
+
+export const RAW_COLUMNS =
+  'site_id, ts, visitor, name, path, ref, country, browser, os, device, utm_source, utm_medium, utm_campaign';
+
+export function createRawTableSql(table: string): string {
+  return `CREATE TABLE IF NOT EXISTS ${table} (
+    site_id INTEGER NOT NULL,
+    ts INTEGER NOT NULL,
+    visitor TEXT NOT NULL,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    ref TEXT NOT NULL DEFAULT '',
+    country TEXT NOT NULL DEFAULT '',
+    browser TEXT NOT NULL DEFAULT '',
+    os TEXT NOT NULL DEFAULT '',
+    device TEXT NOT NULL DEFAULT '',
+    utm_source TEXT NOT NULL DEFAULT '',
+    utm_medium TEXT NOT NULL DEFAULT '',
+    utm_campaign TEXT NOT NULL DEFAULT ''
+  )`;
+}
+
+export const SCHEMA_VERSION = 2;
+
+const SCHEMA: string[] = [
+  `CREATE TABLE IF NOT EXISTS settings (
+     key TEXT PRIMARY KEY,
+     value TEXT NOT NULL
+   ) WITHOUT ROWID`,
+
+  `CREATE TABLE IF NOT EXISTS sites (
+     id INTEGER PRIMARY KEY,
+     domain TEXT NOT NULL UNIQUE,
+     created_at INTEGER NOT NULL
+   )`,
+
+  // An owner administers the instance and implicitly sees every site. A viewer
+  // sees only what site_access grants them — that is what lets you hand a client
+  // a login without exposing your other properties.
+  //
+  // token_version is bumped whenever a password changes or access is revoked,
+  // which invalidates that user's existing session cookies immediately.
+  `CREATE TABLE IF NOT EXISTS users (
+     id INTEGER PRIMARY KEY,
+     email TEXT NOT NULL UNIQUE,
+     password_hash TEXT NOT NULL,
+     password_salt TEXT NOT NULL,
+     role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('owner', 'viewer')),
+     token_version INTEGER NOT NULL DEFAULT 1,
+     created_at INTEGER NOT NULL
+   )`,
+
+  `CREATE TABLE IF NOT EXISTS site_access (
+     user_id INTEGER NOT NULL,
+     site_id INTEGER NOT NULL,
+     PRIMARY KEY (user_id, site_id)
+   ) WITHOUT ROWID`,
+
+  // Hourly rollups. Kept for HOURLY_RETENTION_DAYS so the dashboard can draw
+  // an hour-resolution chart for recent ranges without touching raw events.
+  `CREATE TABLE IF NOT EXISTS stats_hourly (
+     site_id INTEGER NOT NULL,
+     hour TEXT NOT NULL,
+     dim TEXT NOT NULL,
+     val TEXT NOT NULL,
+     pageviews INTEGER NOT NULL,
+     visitors INTEGER NOT NULL,
+     PRIMARY KEY (site_id, hour, dim, val)
+   ) WITHOUT ROWID`,
+
+  // Daily rollups. These are the permanent record — never pruned.
+  `CREATE TABLE IF NOT EXISTS stats_daily (
+     site_id INTEGER NOT NULL,
+     day TEXT NOT NULL,
+     dim TEXT NOT NULL,
+     val TEXT NOT NULL,
+     pageviews INTEGER NOT NULL,
+     visitors INTEGER NOT NULL,
+     PRIMARY KEY (site_id, day, dim, val)
+   ) WITHOUT ROWID`,
+];
+
+/**
+ * Applied once per isolate. This caches a global invariant (the schema exists),
+ * not request state, so it is safe to hold at module scope. Every statement is
+ * IF NOT EXISTS, so concurrent isolates racing here is harmless.
+ */
+let schemaReady: Promise<void> | null = null;
+
+export function ensureSchema(db: D1Database): Promise<void> {
+  schemaReady ??= applySchema(db).catch((err: unknown) => {
+    // Don't cache a failure — the next request should retry.
+    schemaReady = null;
+    throw err;
+  });
+  return schemaReady;
+}
+
+async function applySchema(db: D1Database): Promise<void> {
+  await db.batch(SCHEMA.map((sql) => db.prepare(sql)));
+  await migrateLegacyAdmin(db);
+  await db
+    .prepare(
+      `INSERT INTO settings (key, value) VALUES ('schema_version', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+    .bind(String(SCHEMA_VERSION))
+    .run();
+}
+
+/**
+ * Carry a pre-user-model instance forward.
+ *
+ * Version 1 stored a single admin password in `settings`. Those installs get
+ * that password moved into a real owner account so nobody is locked out by an
+ * upgrade. The account has no email on record, so it logs in as `admin` until
+ * the owner changes it.
+ */
+export async function migrateLegacyAdmin(db: D1Database): Promise<void> {
+  const legacyHash = await getSetting(db, 'admin_hash');
+  const legacySalt = await getSetting(db, 'admin_salt');
+  if (!legacyHash || !legacySalt) return;
+
+  await db
+    .prepare(
+      `INSERT INTO users (email, password_hash, password_salt, role, created_at)
+       SELECT 'admin', ?, ?, 'owner', ?
+       WHERE NOT EXISTS (SELECT 1 FROM users)`,
+    )
+    .bind(legacyHash, legacySalt, Math.floor(Date.now() / 1000))
+    .run();
+
+  // The credentials now live on the account; leaving copies in settings would
+  // be a second place to forget to revoke.
+  await db.prepare("DELETE FROM settings WHERE key IN ('admin_hash', 'admin_salt')").run();
+}
+
+export async function getSetting(db: D1Database, key: string): Promise<string | null> {
+  const row = await db
+    .prepare('SELECT value FROM settings WHERE key = ?')
+    .bind(key)
+    .first<{ value: string }>();
+  return row?.value ?? null;
+}
+
+export async function setSetting(db: D1Database, key: string, value: string): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO settings (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+    .bind(key, value)
+    .run();
+}
+
+/** Raw-event tables that currently exist, oldest first. */
+export async function listRawTables(db: D1Database): Promise<string[]> {
+  const { results } = await db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'ev\\_%' ESCAPE '\\' ORDER BY name`)
+    .all<{ name: string }>();
+  return results.map((r) => r.name);
+}
+
+/** Existing raw tables belonging to a given UTC day. */
+export async function rawTablesForDay(db: D1Database, day: string): Promise<string[]> {
+  const wanted = new Set(hourSuffixesForDay(day).map(rawTable));
+  const existing = await listRawTables(db);
+  return existing.filter((name) => wanted.has(name));
+}
+
+export async function dropTables(db: D1Database, tables: string[]): Promise<void> {
+  if (tables.length === 0) return;
+  await db.batch(tables.map((t) => db.prepare(`DROP TABLE IF EXISTS ${rawTable(t.slice(3))}`)));
+}

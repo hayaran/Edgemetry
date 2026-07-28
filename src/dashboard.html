@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Edgemetry</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg:#fbfbfa; --fg:#1a1a19; --muted:#6b6b68; --faint:#95958f;
+    --line:#e6e6e2; --card:#fff; --accent:#2f6f4e; --accent-soft:#dceee4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#151514; --fg:#eeeeec; --muted:#9a9a96; --faint:#75757010;
+            --line:#2e2e2c; --card:#1e1e1c; --accent:#7ec9a1; --accent-soft:#22352b; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width:1080px; margin:0 auto; padding:20px 20px 64px; }
+
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center;
+           justify-content:space-between; padding:8px 0 20px; }
+  .brand { display:flex; align-items:baseline; gap:10px; }
+  .brand h1 { margin:0; font-size:17px; letter-spacing:-0.01em; }
+  .brand span { font-size:12px; color:var(--faint); }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  select, .btn {
+    font:inherit; font-size:13px; padding:7px 11px; border-radius:8px;
+    border:1px solid var(--line); background:var(--card); color:var(--fg); cursor:pointer;
+  }
+  .btn:hover, select:hover { border-color:var(--accent); }
+  .ranges { display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .ranges button { font:inherit; font-size:13px; padding:7px 11px; border:0;
+                   background:var(--card); color:var(--muted); cursor:pointer; }
+  .ranges button + button { border-left:1px solid var(--line); }
+  .ranges button[aria-pressed="true"] { background:var(--accent-soft); color:var(--fg); font-weight:600; }
+
+  .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .card .label { font-size:12px; color:var(--muted); text-transform:uppercase;
+                 letter-spacing:0.05em; font-weight:600; }
+  .card .value { font-size:28px; font-weight:600; letter-spacing:-0.02em; margin-top:6px;
+                 font-variant-numeric:tabular-nums; }
+  .card .note { font-size:12px; color:var(--faint); margin-top:2px; }
+  .live .value::before { content:""; display:inline-block; width:7px; height:7px; margin-right:7px;
+                         border-radius:50%; background:var(--accent); vertical-align:middle; }
+
+  .chart { background:var(--card); border:1px solid var(--line); border-radius:12px;
+           padding:18px; margin-top:12px; }
+  .chart svg { width:100%; height:180px; display:block; overflow:visible; }
+  .chart .axis { font-size:10px; fill:var(--faint); }
+  .chart rect { fill:var(--accent); opacity:0.85; }
+  .chart rect:hover { opacity:1; }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px,1fr));
+          gap:12px; margin-top:12px; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:12px;
+           padding:16px 18px; }
+  .panel h2 { margin:0 0 12px; font-size:13px; text-transform:uppercase;
+              letter-spacing:0.05em; color:var(--muted); font-weight:600; }
+  .tabs { display:flex; gap:14px; margin:0 0 12px; }
+  .tabs button { font:inherit; font-size:13px; font-weight:600; padding:0 0 5px; border:0;
+                 background:none; color:var(--faint); cursor:pointer; border-bottom:2px solid transparent; }
+  .tabs button[aria-pressed="true"] { color:var(--fg); border-bottom-color:var(--accent); }
+
+  ul.bars { list-style:none; margin:0; padding:0; }
+  ul.bars li { position:relative; display:flex; justify-content:space-between; gap:12px;
+               padding:7px 9px; border-radius:6px; font-size:13.5px; }
+  ul.bars li .fill { position:absolute; inset:0 auto 0 0; background:var(--accent-soft);
+                     border-radius:6px; z-index:0; }
+  ul.bars li .name, ul.bars li .count { position:relative; z-index:1; }
+  ul.bars li .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  ul.bars li .count { color:var(--muted); font-variant-numeric:tabular-nums; flex:none; }
+  .empty { color:var(--faint); font-size:13px; padding:8px 0; }
+
+  details.setup { margin-top:24px; background:var(--card); border:1px solid var(--line);
+                  border-radius:12px; padding:14px 18px; }
+  details.setup summary { cursor:pointer; font-size:13px; font-weight:600; color:var(--muted); }
+  details.setup .body { padding-top:14px; display:grid; gap:14px; }
+  code.snippet { display:block; background:var(--bg); border:1px solid var(--line);
+                 border-radius:8px; padding:12px; font-size:12.5px; overflow-x:auto;
+                 font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  .row input { flex:1; min-width:200px; font:inherit; font-size:13px; padding:7px 10px;
+               border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); }
+  .sites { list-style:none; margin:0; padding:0; display:grid; gap:6px; }
+  .sites li { display:flex; justify-content:space-between; align-items:center; font-size:13.5px;
+              padding:7px 10px; border:1px solid var(--line); border-radius:8px; }
+  .sites button { font:inherit; font-size:12px; color:#c0392b; background:none;
+                  border:0; cursor:pointer; }
+  footer { margin-top:28px; font-size:12px; color:var(--faint); line-height:1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1>Edgemetry</h1>
+      <span id="siteLabel"></span>
+    </div>
+    <div class="controls">
+      <select id="siteSelect" aria-label="Site"></select>
+      <div class="ranges" id="ranges" role="group" aria-label="Date range">
+        <button data-days="0">Today</button>
+        <button data-days="6" aria-pressed="true">7d</button>
+        <button data-days="29">30d</button>
+        <button data-days="89">90d</button>
+        <button data-days="364">12mo</button>
+      </div>
+      <button class="btn" id="refresh" title="Refresh">Refresh</button>
+      <span id="whoami" style="font-size:12px;color:var(--faint)"></span>
+      <form method="post" action="/logout"><button class="btn" type="submit">Sign out</button></form>
+    </div>
+  </header>
+
+  <section class="cards">
+    <div class="card"><div class="label">Unique visitors</div>
+      <div class="value" id="statVisitors">–</div>
+      <div class="note" id="visitorsNote"></div></div>
+    <div class="card"><div class="label">Pageviews</div>
+      <div class="value" id="statPageviews">–</div></div>
+    <div class="card live"><div class="label">Last hour</div>
+      <div class="value" id="statLive">–</div>
+      <div class="note">pageviews right now</div></div>
+  </section>
+
+  <section class="chart"><svg id="chart" role="img" aria-label="Traffic over time"></svg></section>
+
+  <section class="grid">
+    <div class="panel">
+      <h2>Top pages</h2>
+      <ul class="bars" id="dim-path"></ul>
+    </div>
+    <div class="panel">
+      <h2>Referrers</h2>
+      <ul class="bars" id="dim-referrer"></ul>
+    </div>
+    <div class="panel">
+      <h2>Countries</h2>
+      <ul class="bars" id="dim-country"></ul>
+    </div>
+    <div class="panel">
+      <div class="tabs" id="techTabs">
+        <button data-dim="browser" aria-pressed="true">Browser</button>
+        <button data-dim="os">OS</button>
+        <button data-dim="device">Device</button>
+      </div>
+      <ul class="bars" id="dim-tech"></ul>
+    </div>
+    <div class="panel">
+      <div class="tabs" id="utmTabs">
+        <button data-dim="utm_source" aria-pressed="true">Source</button>
+        <button data-dim="utm_medium">Medium</button>
+        <button data-dim="utm_campaign">Campaign</button>
+      </div>
+      <ul class="bars" id="dim-utm"></ul>
+    </div>
+    <div class="panel">
+      <h2>Custom events</h2>
+      <ul class="bars" id="dim-event"></ul>
+    </div>
+  </section>
+
+  <details class="setup">
+    <summary>Install &amp; sites</summary>
+    <div class="body">
+      <div>
+        <p style="margin:0 0 8px;font-size:13.5px;color:var(--muted)">
+          Paste this into your site's <code>&lt;head&gt;</code>. You can rename
+          <code>em.js</code> to anything — the endpoint follows the filename, which is
+          what keeps path-based blocklists from matching every deployment.
+        </p>
+        <code class="snippet" id="snippet"></code>
+        <div class="row" style="margin-top:8px">
+          <button class="btn" id="copySnippet">Copy snippet</button>
+        </div>
+      </div>
+      <div>
+        <p style="margin:0 0 8px;font-size:13.5px;color:var(--muted)">Tracked sites</p>
+        <ul class="sites" id="siteList"></ul>
+        <form class="row" id="addSite" style="margin-top:8px">
+          <input id="newDomain" placeholder="another-site.com" aria-label="Domain to add">
+          <button class="btn" type="submit">Add site</button>
+        </form>
+      </div>
+    </div>
+  </details>
+
+  <details class="setup" id="teamPanel" hidden>
+    <summary>Team</summary>
+    <div class="body">
+      <p style="margin:0;font-size:13.5px;color:var(--muted)">
+        Owners administer the instance and see every site. Viewers only see the
+        sites you tick — useful for giving a client their own dashboard.
+      </p>
+      <ul class="sites" id="userList"></ul>
+      <form id="addUser" style="display:grid;gap:8px">
+        <div class="row">
+          <input id="newEmail" type="email" placeholder="client@example.com" aria-label="Email">
+          <input id="newPassword" type="password" placeholder="temporary password" aria-label="Password" autocomplete="new-password">
+          <select id="newRole" aria-label="Role">
+            <option value="viewer">Viewer</option>
+            <option value="owner">Owner</option>
+          </select>
+        </div>
+        <div id="newSites" class="row" style="gap:12px;font-size:13px;color:var(--muted)"></div>
+        <div class="row"><button class="btn" type="submit">Add user</button></div>
+      </form>
+    </div>
+  </details>
+
+  <details class="setup">
+    <summary>Account</summary>
+    <div class="body">
+      <form id="changePassword" class="row">
+        <input id="currentPassword" type="password" placeholder="current password" aria-label="Current password" autocomplete="current-password">
+        <input id="nextPassword" type="password" placeholder="new password" aria-label="New password" autocomplete="new-password">
+        <button class="btn" type="submit">Change password</button>
+      </form>
+      <p style="margin:0;font-size:12.5px;color:var(--faint)" id="accountNote"></p>
+    </div>
+  </details>
+
+  <footer>
+    No cookies, no fingerprinting, no personal data stored. Visitors are counted with a
+    salted hash that is discarded daily. All times are UTC.
+  </footer>
+</div>
+
+<script>
+(function () {
+  var state = { sites: [], siteId: null, days: 6, tech: 'browser', utm: 'utm_source', me: null };
+  var lastSeries = null;
+  var resizeTimer = null;
+  var regionNames = null;
+  try { regionNames = new Intl.DisplayNames(['en'], { type: 'region' }); } catch (e) {}
+
+  var $ = function (id) { return document.getElementById(id); };
+  var fmt = function (n) { return (n || 0).toLocaleString(); };
+
+  function isoDay(offsetDays) {
+    var d = new Date();
+    d.setUTCDate(d.getUTCDate() + offsetDays);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function label(dim, value) {
+    if (dim === 'country' && regionNames && value.length === 2) {
+      try { return regionNames.of(value) || value; } catch (e) { return value; }
+    }
+    if (dim === 'referrer' && value === '') return 'Direct / none';
+    return value || '(none)';
+  }
+
+  function renderBars(node, items, dim) {
+    node.innerHTML = '';
+    if (!items || !items.length) {
+      node.innerHTML = '<li class="empty">No data for this range</li>';
+      return;
+    }
+    var max = items[0].pageviews || 1;
+    items.forEach(function (item) {
+      var li = document.createElement('li');
+      var pct = Math.max(2, Math.round((item.pageviews / max) * 100));
+      var fill = document.createElement('span');
+      fill.className = 'fill';
+      fill.style.width = pct + '%';
+      var name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = label(dim, item.value);
+      name.title = label(dim, item.value);
+      var count = document.createElement('span');
+      count.className = 'count';
+      count.textContent = fmt(item.pageviews);
+      li.appendChild(fill); li.appendChild(name); li.appendChild(count);
+      node.appendChild(li);
+    });
+  }
+
+  function renderChart(series, granularity) {
+    var svg = $('chart');
+    svg.innerHTML = '';
+    if (!series.length) return;
+
+    var W = svg.clientWidth || 800, H = 180, pad = 22;
+    var max = series.reduce(function (m, p) { return Math.max(m, p.pageviews); }, 0) || 1;
+    var slot = (W - pad) / series.length;
+    var barW = Math.max(1, Math.min(46, slot * 0.68));
+    var ns = 'http://www.w3.org/2000/svg';
+
+    series.forEach(function (point, i) {
+      var h = Math.max(1, Math.round(((H - pad) * point.pageviews) / max));
+      var rect = document.createElementNS(ns, 'rect');
+      rect.setAttribute('x', String(pad + i * slot + (slot - barW) / 2));
+      rect.setAttribute('y', String(H - pad - h));
+      rect.setAttribute('width', String(barW));
+      rect.setAttribute('height', String(h));
+      rect.setAttribute('rx', '2');
+      var title = document.createElementNS(ns, 'title');
+      title.textContent = point.label + ' — ' + fmt(point.pageviews) + ' pageviews, ' +
+                          fmt(point.visitors) + ' visitors';
+      rect.appendChild(title);
+      svg.appendChild(rect);
+
+      var every = Math.ceil(series.length / 12);
+      if (i % every === 0) {
+        var text = document.createElementNS(ns, 'text');
+        text.setAttribute('class', 'axis');
+        text.setAttribute('x', String(pad + i * slot + slot / 2));
+        text.setAttribute('y', String(H - 6));
+        text.setAttribute('text-anchor', 'middle');
+        text.textContent = granularity === 'hour'
+          ? point.label.slice(11) + ':00'
+          : point.label.slice(5);
+        svg.appendChild(text);
+      }
+    });
+
+    var top = document.createElementNS(ns, 'text');
+    top.setAttribute('class', 'axis');
+    top.setAttribute('x', '0');
+    top.setAttribute('y', '10');
+    top.textContent = fmt(max);
+    svg.appendChild(top);
+  }
+
+  function renderSites() {
+    var select = $('siteSelect');
+    select.innerHTML = '';
+    state.sites.forEach(function (site) {
+      var option = document.createElement('option');
+      option.value = String(site.id);
+      option.textContent = site.domain;
+      if (site.id === state.siteId) option.selected = true;
+      select.appendChild(option);
+    });
+
+    var list = $('siteList');
+    list.innerHTML = '';
+    state.sites.forEach(function (site) {
+      var li = document.createElement('li');
+      var name = document.createElement('span');
+      name.textContent = site.domain;
+      li.appendChild(name);
+
+      // Viewers can see which sites they have, but not change the set.
+      if (isOwner()) {
+        var remove = document.createElement('button');
+        remove.textContent = 'Remove';
+        remove.onclick = function () {
+          if (!confirm('Stop tracking ' + site.domain + '? Existing stats are kept.')) return;
+          fetch('/api/sites/' + site.id, { method: 'DELETE' })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+              state.sites = data.sites;
+              if (!state.sites.some(function (s) { return s.id === state.siteId; })) {
+                state.siteId = state.sites.length ? state.sites[0].id : null;
+              }
+              renderSites(); load();
+            });
+        };
+        li.appendChild(remove);
+      }
+      list.appendChild(li);
+    });
+
+    var current = state.sites.filter(function (s) { return s.id === state.siteId; })[0];
+    $('snippet').textContent = '<script defer src="' + location.origin +
+      '/em.js" data-domain="' + (current ? current.domain : 'example.com') + '"><\/script>';
+  }
+
+  function isOwner() { return state.me && state.me.role === 'owner'; }
+
+  function siteCheckboxes(container, checkedIds, onChange) {
+    container.innerHTML = '';
+    state.sites.forEach(function (site) {
+      var label = document.createElement('label');
+      label.style.cssText = 'display:flex;gap:5px;align-items:center;font-weight:400';
+      var box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = String(site.id);
+      box.style.width = 'auto';
+      box.checked = checkedIds.indexOf(site.id) !== -1;
+      if (onChange) box.addEventListener('change', onChange);
+      label.appendChild(box);
+      label.appendChild(document.createTextNode(site.domain));
+      container.appendChild(label);
+    });
+  }
+
+  function checkedSiteIds(container) {
+    return [].slice.call(container.querySelectorAll('input:checked')).map(function (b) {
+      return Number(b.value);
+    });
+  }
+
+  function patchUser(id, payload, after) {
+    fetch('/api/users/' + id, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error) { alert(data.error); loadUsers(); return; }
+        if (after) after(data);
+      });
+  }
+
+  function renderUsers(users) {
+    var list = $('userList');
+    list.innerHTML = '';
+
+    users.forEach(function (user) {
+      var li = document.createElement('li');
+      li.style.cssText = 'display:grid;gap:8px';
+
+      var top = document.createElement('div');
+      top.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px';
+
+      var name = document.createElement('span');
+      name.textContent = user.email + (user.id === state.me.id ? ' (you)' : '');
+
+      var right = document.createElement('span');
+      right.style.cssText = 'display:flex;gap:10px;align-items:center';
+
+      var role = document.createElement('select');
+      role.innerHTML = '<option value="viewer">Viewer</option><option value="owner">Owner</option>';
+      role.value = user.role;
+      role.disabled = user.id === state.me.id;
+      role.addEventListener('change', function () {
+        patchUser(user.id, { role: role.value }, function () { loadUsers(); });
+      });
+
+      var remove = document.createElement('button');
+      remove.textContent = 'Remove';
+      remove.disabled = user.id === state.me.id;
+      remove.style.opacity = user.id === state.me.id ? '0.4' : '1';
+      remove.addEventListener('click', function () {
+        if (!confirm('Remove ' + user.email + '?')) return;
+        fetch('/api/users/' + user.id, { method: 'DELETE' })
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            if (data.error) { alert(data.error); return; }
+            renderUsers(data.users);
+          });
+      });
+
+      right.appendChild(role);
+      right.appendChild(remove);
+      top.appendChild(name);
+      top.appendChild(right);
+      li.appendChild(top);
+
+      // Owners implicitly see every site, so per-site ticks would be misleading.
+      if (user.role === 'viewer') {
+        var sites = document.createElement('div');
+        sites.className = 'row';
+        sites.style.cssText = 'gap:12px;font-size:13px;color:var(--muted)';
+        siteCheckboxes(sites, user.siteIds, function () {
+          patchUser(user.id, { siteIds: checkedSiteIds(sites) });
+        });
+        li.appendChild(sites);
+      }
+
+      list.appendChild(li);
+    });
+  }
+
+  function loadUsers() {
+    if (!isOwner()) return;
+    fetch('/api/users')
+      .then(function (r) { return r.json(); })
+      .then(function (data) { if (data.users) renderUsers(data.users); });
+  }
+
+  function load() {
+    if (state.siteId == null) return;
+    var params = new URLSearchParams({
+      site: String(state.siteId),
+      from: isoDay(-state.days),
+      to: isoDay(0)
+    });
+    fetch('/api/stats?' + params)
+      .then(function (r) {
+        if (r.status === 401) { location.href = '/login'; throw new Error('unauthorized'); }
+        return r.json();
+      })
+      .then(function (data) {
+        var s = data.stats;
+        $('siteLabel').textContent = data.site.domain;
+        $('statVisitors').textContent = fmt(s.totals.visitors);
+        $('statPageviews').textContent = fmt(s.totals.pageviews);
+        $('statLive').textContent = fmt(s.live.pageviews);
+        $('visitorsNote').textContent = state.days > 0
+          ? 'summed per day — a repeat visitor counts once a day'
+          : 'unique for today';
+        lastSeries = s;
+        renderChart(s.series, s.granularity);
+        renderBars($('dim-path'), s.breakdowns.path, 'path');
+        renderBars($('dim-referrer'), s.breakdowns.referrer, 'referrer');
+        renderBars($('dim-country'), s.breakdowns.country, 'country');
+        renderBars($('dim-tech'), s.breakdowns[state.tech], state.tech);
+        renderBars($('dim-utm'), s.breakdowns[state.utm], state.utm);
+        renderBars($('dim-event'), s.breakdowns.event, 'event');
+      })
+      .catch(function (err) { console.error(err); });
+  }
+
+  function wireTabs(containerId, key, targetId) {
+    $(containerId).addEventListener('click', function (event) {
+      var button = event.target.closest('button');
+      if (!button) return;
+      state[key] = button.dataset.dim;
+      [].forEach.call(this.querySelectorAll('button'), function (b) {
+        b.setAttribute('aria-pressed', String(b === button));
+      });
+      load();
+    });
+  }
+
+  $('ranges').addEventListener('click', function (event) {
+    var button = event.target.closest('button');
+    if (!button) return;
+    state.days = Number(button.dataset.days);
+    [].forEach.call(this.querySelectorAll('button'), function (b) {
+      b.setAttribute('aria-pressed', String(b === button));
+    });
+    load();
+  });
+
+  $('siteSelect').addEventListener('change', function () {
+    state.siteId = Number(this.value);
+    renderSites(); load();
+  });
+
+  $('refresh').addEventListener('click', load);
+
+  $('copySnippet').addEventListener('click', function () {
+    navigator.clipboard.writeText($('snippet').textContent).then(function () {
+      var button = $('copySnippet');
+      button.textContent = 'Copied';
+      setTimeout(function () { button.textContent = 'Copy snippet'; }, 1400);
+    });
+  });
+
+  $('addSite').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var domain = $('newDomain').value.trim();
+    if (!domain) return;
+    fetch('/api/sites', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ domain: domain })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error) { alert(data.error); return; }
+        state.sites = data.sites;
+        $('newDomain').value = '';
+        renderSites();
+      });
+  });
+
+  $('addUser').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var payload = {
+      email: $('newEmail').value.trim(),
+      password: $('newPassword').value,
+      role: $('newRole').value,
+      siteIds: checkedSiteIds($('newSites'))
+    };
+    fetch('/api/users', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error) { alert(data.error); return; }
+        $('newEmail').value = '';
+        $('newPassword').value = '';
+        siteCheckboxes($('newSites'), []);
+        renderUsers(data.users);
+      });
+  });
+
+  $('changePassword').addEventListener('submit', function (event) {
+    event.preventDefault();
+    fetch('/api/me/password', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        current: $('currentPassword').value,
+        next: $('nextPassword').value
+      })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error) { $('accountNote').textContent = data.error; return; }
+        $('currentPassword').value = '';
+        $('nextPassword').value = '';
+        $('accountNote').textContent =
+          'Password changed. Any other devices signed in as you were signed out.';
+      });
+  });
+
+  wireTabs('techTabs', 'tech', 'dim-tech');
+  wireTabs('utmTabs', 'utm', 'dim-utm');
+  // Redraw the chart at the new width, but never refetch — resize fires in
+  // bursts and each fetch is real database work.
+  window.addEventListener('resize', function () {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      if (lastSeries) renderChart(lastSeries.series, lastSeries.granularity);
+    }, 150);
+  });
+
+  function unauthorized(response) {
+    if (response.status === 401) { location.href = '/login'; throw new Error('unauthorized'); }
+    return response.json();
+  }
+
+  // Identity first: what a viewer is allowed to do changes what we render, and
+  // guessing wrong would flash owner-only controls at a client.
+  Promise.all([
+    fetch('/api/me').then(unauthorized),
+    fetch('/api/sites').then(unauthorized)
+  ])
+    .then(function (results) {
+      state.me = results[0].user;
+      state.sites = results[1].sites;
+      state.siteId = state.sites.length ? state.sites[0].id : null;
+
+      $('whoami').textContent = state.me.email + (isOwner() ? '' : ' · viewer');
+      $('addSite').hidden = !isOwner();
+      $('teamPanel').hidden = !isOwner();
+
+      renderSites();
+      if (isOwner()) {
+        siteCheckboxes($('newSites'), []);
+        loadUsers();
+      }
+      load();
+    })
+    .catch(function (err) { console.error(err); });
+})();
+</script>
+</body>
+</html>

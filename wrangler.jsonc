@@ -1,0 +1,48 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "edgemetry",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-28",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Observability is on so `wrangler tail` and the dashboard's Logs view work
+  // out of the box. Drop head_sampling_rate if your traffic grows a lot.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+
+  // D1 is the only resource this Worker needs.
+  //
+  // `database_id` is deliberately absent. Omitting it is what opts into
+  // automatic provisioning: both the "Deploy to Cloudflare" button and a plain
+  // `wrangler deploy` will create the database on first deploy and write the
+  // real id back here. A placeholder id would NOT provision anything — it would
+  // try to bind a database that does not exist and fail.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "edgemetry"
+    }
+  ],
+
+  "triggers": {
+    // :05 past the hour — roll the completed hour into stats_hourly.
+    // 00:20 UTC — roll yesterday into stats_daily, then drop its raw tables.
+    "crons": ["5 * * * *", "20 0 * * *"]
+  },
+
+  // Note: the dashboard ships inside the Worker bundle rather than as static
+  // assets — one less thing for the deploy button to wire up, and it keeps every
+  // route under our own control instead of the asset router's. No module rule is
+  // needed; Wrangler already imports *.html as a Text module by default.
+
+  "vars": {
+    // Days of hourly rollups to keep. Daily rollups are kept forever.
+    "HOURLY_RETENTION_DAYS": "7",
+    // PBKDF2 iterations for the admin password. The Workers *free* plan caps
+    // CPU at 10ms per request, which is why this is not the usual 100k+.
+    // On the $5/mo paid plan you can safely raise this to 200000.
+    "PBKDF2_ITERATIONS": "15000"
+  }
+}
