@@ -40,6 +40,12 @@
   "vars": {
     // Days of hourly rollups to keep. Daily rollups are kept forever.
     "HOURLY_RETENTION_DAYS": "7",
+    // The filter cube — one rollup row per distinct combination of dimensions
+    // per day — is what lets the dashboard narrow every panel at once. Its cost
+    // scales with how *varied* your traffic is, not how much of it there is.
+    // Set to "off" on an unusually diverse instance to trade filtering for a
+    // smaller write budget.
+    "FILTERS": "on",
     // PBKDF2 iterations for the admin password. The Workers *free* plan caps
     // CPU at 10ms per request, which is why this is not the usual 100k+.
     // On the $5/mo paid plan you can safely raise this to 200000.

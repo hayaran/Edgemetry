@@ -4,7 +4,7 @@
  * just wrote.
  */
 
-import { RAW_COLUMNS, createRawTableSql, rawTable } from './db';
+import { RAW_COLUMNS, alterRawTable, createRawTableSql, rawTable } from './db';
 import { partsForTs } from './time';
 import { isBot, parseUa } from './ua';
 import { computeVisitor } from './visitor';
@@ -19,6 +19,7 @@ interface EventPayload {
   d?: unknown;
   u?: unknown;
   r?: unknown;
+  w?: unknown;
 }
 
 const CORS_HEADERS = {
@@ -67,6 +68,22 @@ function referrerHost(referrer: string, siteDomain: string): string {
   }
 }
 
+/**
+ * Screen width, kept as one of four buckets.
+ *
+ * The exact pixel width is a meaningful fingerprinting signal and we have no
+ * use for it, so it is thrown away at the door rather than stored and bucketed
+ * later.
+ */
+function screenBucket(raw: unknown): string {
+  const width = typeof raw === 'number' ? raw : Number.parseInt(String(raw ?? ''), 10);
+  if (!Number.isFinite(width) || width <= 0) return '';
+  if (width >= 1440) return '≥ 1440px';
+  if (width >= 1024) return '1024–1439';
+  if (width >= 768) return '768–1023';
+  return '< 768px';
+}
+
 /** Cached only for the hour currently being written to; a new hour re-checks. */
 let ensuredTable: string | null = null;
 
@@ -79,13 +96,21 @@ async function insertEvent(db: D1Database, table: string, values: unknown[]): Pr
     ensuredTable = table;
     return;
   } catch (error) {
+    const message = String(error);
     // Always recover from a missing table, even if this isolate believed it
     // existed — the rollup job drops tables, and a cached belief must never be
     // the reason an event is lost.
-    if (!/no such table/i.test(String(error))) throw error;
+    if (/no such table/i.test(message)) {
+      await db.prepare(createRawTableSql(table)).run();
+    } else if (/no such column|has no column named/i.test(message)) {
+      // The hour in flight was created by an older build. Widening it is DDL,
+      // so it costs nothing and the event still lands in its own hour.
+      await alterRawTable(db, table);
+    } else {
+      throw error;
+    }
   }
 
-  await db.prepare(createRawTableSql(table)).run();
   await db.prepare(sql).bind(...values).run();
   ensuredTable = table;
 }
@@ -151,6 +176,7 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
     browser,
     os,
     device,
+    screenBucket(payload.w),
     clamp(params.get('utm_source') ?? '', MAX_FIELD_LENGTH),
     clamp(params.get('utm_medium') ?? '', MAX_FIELD_LENGTH),
     clamp(params.get('utm_campaign') ?? '', MAX_FIELD_LENGTH),

@@ -25,6 +25,16 @@ import {
   setSiteAccess,
   verifyPassword,
 } from '../src/users';
+import {
+  loadBreakdown,
+  loadBreakdowns,
+  loadRealtime,
+  loadSeries,
+  loadTotals,
+  metricValue,
+  parseFilters,
+  resolveRange,
+} from '../src/query';
 import { catchUpToday, rollupDay, rollupHour } from '../src/rollup';
 import { getStats } from '../src/stats';
 import { dayOffset, hourSuffixesForDay, partsFor, partsForTs } from '../src/time';
@@ -33,10 +43,33 @@ import { getDailySalt, pruneSalts, visitorHash } from '../src/visitor';
 
 const db = env.DB;
 
-async function insertPageview(
-  suffix: string,
-  options: { siteId?: number; visitor: string; path?: string; country?: string; name?: string },
-): Promise<void> {
+interface EventOptions {
+  siteId?: number;
+  visitor: string;
+  path?: string;
+  country?: string;
+  name?: string;
+  ref?: string;
+  device?: string;
+  /** Minutes past the hour, so a visit can be given a measurable length. */
+  minute?: number;
+}
+
+/** The real unix timestamp an `ev_YYYYMMDDHH` table stands for. */
+function timestampOf(suffix: string, minute = 0): number {
+  return (
+    Date.UTC(
+      Number(suffix.slice(0, 4)),
+      Number(suffix.slice(4, 6)) - 1,
+      Number(suffix.slice(6, 8)),
+      Number(suffix.slice(8, 10)),
+    ) /
+      1000 +
+    minute * 60
+  );
+}
+
+async function insertPageview(suffix: string, options: EventOptions): Promise<void> {
   const table = rawTable(suffix);
   await db.prepare(createRawTableSql(table)).run();
   const placeholders = RAW_COLUMNS.split(',').map(() => '?').join(',');
@@ -44,15 +77,16 @@ async function insertPageview(
     .prepare(`INSERT INTO ${table} (${RAW_COLUMNS}) VALUES (${placeholders})`)
     .bind(
       options.siteId ?? 1,
-      Number.parseInt(suffix, 10),
+      timestampOf(suffix, options.minute),
       options.visitor,
       options.name ?? 'pageview',
       options.path ?? '/',
-      '',
+      options.ref ?? '',
       options.country ?? 'US',
       'Chrome',
       'macOS',
-      'Desktop',
+      options.device ?? 'Desktop',
+      '≥ 1440px',
       '',
       '',
       '',
@@ -64,7 +98,15 @@ async function resetDatabase(): Promise<void> {
   for (const table of await listRawTables(db)) {
     await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
   }
-  for (const table of ['stats_hourly', 'stats_daily', 'site_access', 'users', 'sites', 'settings']) {
+  for (const table of [
+    'stats_hourly',
+    'stats_daily',
+    'stats_cube',
+    'site_access',
+    'users',
+    'sites',
+    'settings',
+  ]) {
     await db.prepare(`DELETE FROM ${table}`).run();
   }
 }
@@ -208,6 +250,57 @@ describe('rollups', () => {
       .prepare("SELECT val, pageviews FROM stats_hourly WHERE dim = 'event'")
       .first<{ val: string; pageviews: number }>();
     expect(event).toEqual({ val: 'signup', pageviews: 1 });
+  });
+
+  it('rolls up a full day, which is more hour tables than D1 will union at once', async () => {
+    // D1 caps a compound SELECT at five terms. A busy day is 24 raw tables and
+    // every visit-level number needs to see all of them together, so this is
+    // the case that decides whether the daily job works at all.
+    for (let hour = 0; hour < 24; hour++) {
+      const suffix = `20260302${String(hour).padStart(2, '0')}`;
+      await insertPageview(suffix, { visitor: 'aaa', path: '/' });
+      await insertPageview(suffix, { visitor: 'h' + hour, path: '/docs' });
+    }
+
+    await rollupDay(db, '2026-03-02');
+
+    const daily = await db
+      .prepare("SELECT pageviews, visitors, sessions FROM stats_daily WHERE dim = '_total' AND day = '2026-03-02'")
+      .first<{ pageviews: number; visitors: number; sessions: number }>();
+    // 48 pageviews from 25 visitors: one who came back every hour, plus 24 others.
+    expect(daily).toEqual({ pageviews: 48, visitors: 25, sessions: 25 });
+
+    const cube = await db
+      .prepare("SELECT COUNT(*) AS n FROM stats_cube WHERE day = '2026-03-02'")
+      .first<{ n: number }>();
+    expect(cube?.n).toBeGreaterThan(0);
+  });
+
+  it('rolls up an hour table an older version created', async () => {
+    // The upgrade lands mid-hour: the table being written to right now was
+    // created by the previous build and has no `screen` column, but the rollup
+    // and every filtered query select it by name.
+    const table = 'ev_2026030208';
+    await db
+      .prepare(
+        `CREATE TABLE ${table} (site_id INTEGER NOT NULL, ts INTEGER NOT NULL, visitor TEXT NOT NULL,
+         name TEXT NOT NULL, path TEXT NOT NULL, ref TEXT NOT NULL DEFAULT '',
+         country TEXT NOT NULL DEFAULT '', browser TEXT NOT NULL DEFAULT '', os TEXT NOT NULL DEFAULT '',
+         device TEXT NOT NULL DEFAULT '', utm_source TEXT NOT NULL DEFAULT '',
+         utm_medium TEXT NOT NULL DEFAULT '', utm_campaign TEXT NOT NULL DEFAULT '')`,
+      )
+      .run();
+    await db
+      .prepare(`INSERT INTO ${table} (site_id, ts, visitor, name, path) VALUES (1, ?, 'aaa', 'pageview', '/legacy')`)
+      .bind(timestampOf('2026030208'))
+      .run();
+
+    await rollupDay(db, '2026-03-02');
+
+    const row = await db
+      .prepare("SELECT pageviews FROM stats_daily WHERE dim = 'path' AND val = '/legacy'")
+      .first<{ pageviews: number }>();
+    expect(row?.pageviews).toBe(1);
   });
 
   it('repairs hours the cron never folded in', async () => {
@@ -428,6 +521,208 @@ describe('stats queries', () => {
     const stats = await getStats(db, 1, yesterday, partsFor(now).day, now);
     expect(stats.totals.pageviews).toBe(1);
     expect(stats.breakdowns.country).toEqual([{ value: 'DE', pageviews: 1, visitors: 1 }]);
+  });
+});
+
+describe('visits, filters and the cube', () => {
+  const now = new Date();
+  const yesterday = dayOffset(now, -1);
+  const compact = yesterday.replaceAll('-', '');
+  const window = { from: yesterday, to: yesterday };
+
+  it('derives visits, bounce rate and time on site from raw events', async () => {
+    // aaa reads two pages three minutes apart; bbb reads one and leaves.
+    await insertPageview(`${compact}09`, { visitor: 'aaa', path: '/', minute: 0 });
+    await insertPageview(`${compact}09`, { visitor: 'aaa', path: '/docs', minute: 3 });
+    await insertPageview(`${compact}09`, { visitor: 'bbb', path: '/pricing', minute: 5 });
+
+    await rollupDay(db, yesterday);
+    const totals = await loadTotals(db, 1, yesterday, yesterday, [], now);
+
+    expect(totals).toEqual({ views: 3, visits: 2, bounces: 1, duration: 180 });
+    expect(metricValue('visitors', totals)).toBe(2);
+    expect(metricValue('vpv', totals)).toBe(1.5);
+    expect(metricValue('bounce', totals)).toBe(50);
+    expect(metricValue('time', totals)).toBe(90);
+  });
+
+  it('ranks the page a visit started on separately from the one it ended on', async () => {
+    await insertPageview(`${compact}09`, { visitor: 'aaa', path: '/landing', minute: 0 });
+    await insertPageview(`${compact}09`, { visitor: 'aaa', path: '/pricing', minute: 4 });
+
+    await rollupDay(db, yesterday);
+
+    const entry = await loadBreakdown(db, 1, window, [], 'entry', 10, now);
+    const exit = await loadBreakdown(db, 1, window, [], 'exit', 10, now);
+
+    expect(entry.map((r) => r.name)).toEqual(['/landing']);
+    expect(exit.map((r) => r.name)).toEqual(['/pricing']);
+  });
+
+  it('narrows every dimension at once, which the per-dimension rollups cannot', async () => {
+    await insertPageview(`${compact}09`, { visitor: 'aaa', path: '/docs', country: 'DE' });
+    await insertPageview(`${compact}09`, { visitor: 'bbb', path: '/docs', country: 'US' });
+    await insertPageview(`${compact}09`, { visitor: 'ccc', path: '/pricing', country: 'DE' });
+
+    await rollupDay(db, yesterday);
+
+    const all = await loadBreakdown(db, 1, window, [], 'path', 10, now);
+    expect(all).toEqual([
+      { name: '/docs', value: 2, visits: 2 },
+      { name: '/pricing', value: 1, visits: 1 },
+    ]);
+
+    // Summing the unfiltered "path" and "country" rollups could never tell you
+    // this; the cube keeps the combination.
+    const german = await loadBreakdown(db, 1, window, [{ dim: 'country', value: 'DE' }], 'path', 10, now);
+    expect(german).toEqual([
+      { name: '/docs', value: 1, visits: 1 },
+      { name: '/pricing', value: 1, visits: 1 },
+    ]);
+
+    const totals = await loadTotals(db, 1, yesterday, yesterday, [{ dim: 'country', value: 'DE' }], now);
+    expect(totals.views).toBe(2);
+    expect(totals.visits).toBe(2);
+  });
+
+  it('treats several values of one dimension as "either" and two dimensions as "both"', async () => {
+    await insertPageview(`${compact}09`, { visitor: 'aaa', path: '/a', country: 'DE', device: 'Mobile' });
+    await insertPageview(`${compact}09`, { visitor: 'bbb', path: '/a', country: 'FR', device: 'Desktop' });
+    await insertPageview(`${compact}09`, { visitor: 'ccc', path: '/a', country: 'US', device: 'Mobile' });
+
+    await rollupDay(db, yesterday);
+
+    const either = [
+      { dim: 'country', value: 'DE' },
+      { dim: 'country', value: 'FR' },
+    ];
+    expect((await loadTotals(db, 1, yesterday, yesterday, either, now)).views).toBe(2);
+
+    const both = [...either, { dim: 'device', value: 'Mobile' }];
+    expect((await loadTotals(db, 1, yesterday, yesterday, both, now)).views).toBe(1);
+  });
+
+  it('answers a filtered question about today from raw events, before any rollup', async () => {
+    const suffix = partsFor(now).suffix;
+    const today = partsFor(now).day;
+
+    await insertPageview(suffix, { visitor: 'aaa', path: '/docs', country: 'DE' });
+    await insertPageview(suffix, { visitor: 'bbb', path: '/docs', country: 'US' });
+
+    const filters = [{ dim: 'country', value: 'DE' }];
+    const totals = await loadTotals(db, 1, today, today, filters, now);
+    const rows = await loadBreakdown(db, 1, { from: today, to: today }, filters, 'path', 10, now);
+
+    expect(totals.views).toBe(1);
+    expect(rows).toEqual([{ name: '/docs', value: 1, visits: 1 }]);
+  });
+
+  it('reports traffic with no referrer as direct rather than dropping it', async () => {
+    await insertPageview(`${compact}09`, { visitor: 'aaa', ref: 'news.ycombinator.com' });
+    await insertPageview(`${compact}09`, { visitor: 'bbb', ref: '' });
+    await insertPageview(`${compact}09`, { visitor: 'ccc', ref: '' });
+
+    await rollupDay(db, yesterday);
+    const rows = await loadBreakdown(db, 1, window, [], 'referrer', 10, now);
+
+    expect(rows).toEqual([
+      { name: 'Direct / none', value: 2, visits: 0 },
+      { name: 'news.ycombinator.com', value: 1, visits: 1 },
+    ]);
+  });
+
+  it('counts direct traffic once when a range spans the rollup and today', async () => {
+    // The two stores disagree about empty strings: the per-dimension rollup
+    // drops them, the raw tables keep them. Direct therefore comes from a
+    // subtraction for finished days and from real rows for today, and the two
+    // must not overlap or leave a gap.
+    await insertPageview(`${compact}09`, { visitor: 'aaa', ref: '' });
+    await insertPageview(`${compact}09`, { visitor: 'bbb', ref: '' });
+    await insertPageview(`${compact}09`, { visitor: 'ccc', ref: 'github.com' });
+    await rollupDay(db, yesterday);
+
+    await insertPageview(partsFor(now).suffix, { visitor: 'ddd', ref: '' });
+
+    const today = partsFor(now).day;
+    const rows = await loadBreakdown(db, 1, { from: yesterday, to: today }, [], 'referrer', 10, now);
+
+    expect(rows).toEqual([
+      { name: 'Direct / none', value: 3, visits: 1 },
+      { name: 'github.com', value: 1, visits: 1 },
+    ]);
+  });
+
+  it('answers several rankings in one pass with the same numbers as one at a time', async () => {
+    await insertPageview(`${compact}09`, { visitor: 'aaa', path: '/a', country: 'DE', minute: 0 });
+    await insertPageview(`${compact}09`, { visitor: 'aaa', path: '/b', country: 'DE', minute: 2 });
+    await insertPageview(`${compact}09`, { visitor: 'bbb', path: '/a', country: 'US', minute: 0 });
+    await rollupDay(db, yesterday);
+
+    const together = await loadBreakdowns(db, 1, window, [], ['path', 'entry', 'exit', 'country'], 10, now);
+    for (const dim of ['path', 'entry', 'exit', 'country'] as const) {
+      expect(together[dim]).toEqual(await loadBreakdown(db, 1, window, [], dim, 10, now));
+    }
+
+    expect(together.entry).toEqual([{ name: '/a', value: 2, visits: 2 }]);
+    expect(together.exit).toEqual([
+      { name: '/a', value: 1, visits: 1 },
+      { name: '/b', value: 1, visits: 1 },
+    ]);
+  });
+
+  it('pads quiet days so a slow week still draws a full chart', async () => {
+    const range = resolveRange('7d', undefined, undefined, now)!;
+    const series = await loadSeries(db, 1, range, range.from, range.to, [], now);
+
+    expect(series).toHaveLength(7);
+    expect(series.every((point) => typeof point.views === 'number')).toBe(true);
+    expect(series[series.length - 1]!.label).toBe(partsFor(now).day);
+  });
+
+  it('counts the last half hour and shows the most recent pages', async () => {
+    const suffix = partsFor(now).suffix;
+    await insertPageview(suffix, { visitor: 'aaa', path: '/live', country: 'DE', minute: now.getUTCMinutes() });
+
+    const realtime = await loadRealtime(db, 1, now);
+
+    expect(realtime.minutes).toHaveLength(30);
+    // The newest bucket is the minute in progress — the one the panel exists to
+    // show. An off-by-one here is invisible except that nothing ever appears.
+    expect(realtime.minutes[29]).toEqual({ label: '1m', cur: 1 });
+    expect(realtime.recent[0]).toMatchObject({ path: '/live', country: 'DE' });
+    // Nothing that could identify a person leaves this query.
+    expect(Object.keys(realtime.recent[0]!)).toEqual(['ts', 'path', 'country']);
+  });
+});
+
+describe('range and filter parsing', () => {
+  it('compares against the same number of days immediately before the range', () => {
+    const now = new Date('2026-03-30T12:00:00Z');
+    const range = resolveRange('7d', undefined, undefined, now)!;
+
+    expect(range).toMatchObject({
+      from: '2026-03-24',
+      to: '2026-03-30',
+      prevFrom: '2026-03-17',
+      prevTo: '2026-03-23',
+      granularity: 'day',
+    });
+  });
+
+  it('keeps colons and commas inside a filter value', () => {
+    const filters = parseFilters(
+      `path:${encodeURIComponent('/a,b')},referrer:${encodeURIComponent('example.com:8080')}`,
+    );
+    expect(filters).toEqual([
+      { dim: 'path', value: '/a,b' },
+      { dim: 'referrer', value: 'example.com:8080' },
+    ]);
+  });
+
+  it('ignores unknown dimensions and duplicates instead of failing the request', () => {
+    // An old bookmark should widen the view, not render an error page.
+    expect(parseFilters('nonsense:x,path:/a,path:/a')).toEqual([{ dim: 'path', value: '/a' }]);
+    expect(parseFilters(undefined)).toEqual([]);
   });
 });
 

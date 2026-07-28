@@ -22,14 +22,23 @@ const TRACKER_SOURCE = `(function(){
       location.hostname.indexOf('.') === -1;
   }
 
+  function ignored() {
+    if (window.__ma_disable) return true;
+    // Set from your own browser's console on your own site. localStorage is
+    // per-origin, so this cannot be flipped for you from the dashboard.
+    try { return localStorage.getItem('em-ignore') === '1'; } catch (e) { return false; }
+  }
+
   function send(name) {
     if (!allowLocal && isLocal()) return;
-    if (window.__ma_disable) return;
+    if (ignored()) return;
     var body = JSON.stringify({
       n: name,
       d: domain,
       u: location.href,
-      r: document.referrer || ''
+      r: document.referrer || '',
+      // Bucketed to one of four ranges server-side and never stored exactly.
+      w: window.innerWidth || 0
     });
     try {
       if (navigator.sendBeacon) {

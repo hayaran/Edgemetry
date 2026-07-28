@@ -12,13 +12,25 @@ site deserves.
 
 ## What you get
 
-- **Pageviews, unique visitors, and a live "last hour" counter**
-- **Breakdowns** by page, referrer, country, browser, OS, device, and UTM tags
+- **Five metrics** — visitors, pageviews, views per visit, bounce rate and average
+  time — each with a sparkline and a previous-period comparison
+- **Stackable filters**: click any row and *every* panel narrows at once. Pages in
+  Germany, referrers on mobile, whatever combination you want
+- **Breakdowns** by page, entry page, exit page, referrer, country, browser, OS,
+  device, screen size and UTM tags
+- **A real choropleth**, projected and served from your own Worker — no CDN call
+- **Realtime**: a live counter, the last thirty minutes minute by minute, and a
+  feed of the pages being read right now
 - **Custom events** via a one-line `edgemetry('signup')` call
+- **A command palette** (`⌘K`) that searches every dimension at once and returns
+  filters rather than links
+- **Light and dark**, and a dashboard that works down to a phone
 - **Multiple sites and multiple users** on one deployment, with per-site access
 - **Unlimited history** — daily rollups are never deleted
 - **No cookies, no fingerprinting, no personal data at rest**
-- **~1.7 KB tracking script**, served from your own domain
+- **No third-party requests anywhere** — not on your site, not in the dashboard.
+  The fonts and the world map ship inside the Worker
+- **~2.1 KB tracking script**, served from your own domain
 
 ## Getting started
 
@@ -115,6 +127,64 @@ around 8,000 visits a day. So instead:
 
 That works out to roughly **1.2 row-writes per pageview end to end**.
 
+### What filtering costs
+
+Per-dimension rollups cannot answer "pages, but only in Germany" — summing the
+`path` rows and the `country` rows separately has already thrown the combination
+away. So there is one more table, `stats_cube`, holding one row per distinct
+*combination* of dimensions per day.
+
+The important property is that its cost scales with how **varied** your traffic
+is, not how much of it there is. A site serving the same 40 routes to the same 30
+countries writes the same handful of cube rows whether it gets a thousand
+pageviews a day or a million. A site with a unique path per visitor writes one
+row per pageview.
+
+For a typical content site that lands somewhere around **+0.3 to +0.6 row-writes
+per pageview**. If your traffic is unusually diverse and you would rather have the
+budget than the filters, set `FILTERS` to `off` in `wrangler.jsonc`; everything
+else keeps working and the filter chips simply return nothing.
+
+Visits, bounce rate and time on site are free: they are computed from the raw
+rows at rollup time and stored as extra **columns** on rows that were being
+written anyway.
+
+### What reading costs
+
+Writes are the limit people plan for; on a dashboard, **reads are the one that
+actually bites**. D1 allows 5,000,000 row reads a day, and the rollup tables are
+keyed `(site_id, day, dim, val)` — so a query for one dimension still reads
+*every* dimension's rows in the day range and discards the rest. A 30-day range
+on a busy site is a couple of thousand rows per query, and it is the number of
+queries that decides whether that matters.
+
+So the read path is built around asking as few times as possible:
+
+- **One scan answers every panel.** `/api/breakdown?dim=path,referrer,country,…`
+  reads the range once and groups by `(dim, val)`, instead of once per panel.
+- **Totals are summed from the series** rather than fetched again. Every
+  bucketing folds the same days, so the headline numbers are free once the chart
+  has its data.
+- **Realtime is one scan, not three.** The raw tables carry no index — that is
+  what keeps a pageview at one row written — so every poll is a scan of the
+  current hour. Counting online visitors, the per-minute shape and the feed all
+  want the same few hundred rows, so they are fetched once and folded in the
+  Worker.
+- **Only the realtime panel polls, every 30 seconds, and only while the tab is
+  visible.** A dashboard left open on a second monitor should not spend the
+  day's read budget on a number nobody is looking at.
+
+Together that is roughly **18 scans per dashboard load down to 6**, and an idle
+open tab from ~7 million row reads a day to under 100,000.
+
+Filtered views are the expensive case that remains: the cube has to be asked
+once per dimension, because a filter's column sits past the key prefix and no
+single grouping answers several dimensions at once. If you live in filtered
+views on a high-traffic site and start bumping the read limit, an index on
+`stats_cube (site_id, day, country)` — or whichever dimension you actually
+filter by — trades about one extra row written per cube row for a much cheaper
+read.
+
 | Resource | Free limit | At 10k visits/day |
 |---|---|---|
 | Worker requests | 100,000/day | ~40,000 |
@@ -128,14 +198,45 @@ architecture does not change, you just switch plans.
 
 ### Where the numbers come from
 
-| Range | Source |
+| Question | Source |
 |---|---|
-| Finished days | `stats_daily` — kept forever |
-| Today | `stats_hourly`, refreshed at :05 each hour |
-| The current hour | Read live from the raw table on each dashboard load |
+| Unfiltered, finished days | `stats_daily` — kept forever |
+| Unfiltered, today | `stats_hourly`, refreshed at :05 each hour, plus the live raw hour |
+| Filtered, finished days | `stats_cube` |
+| Filtered, today | Today's raw hour tables, read directly |
 
 Two cron triggers do the folding, and the dashboard repairs any hour the cron
 missed on the next page load, so a failed or delayed run is self-healing.
+
+A **visit** is one visitor's pageviews inside a UTC day. With no session id
+stored that is the most this can honestly claim, and it has the tidy consequence
+that visits and daily unique visitors are the same number. Views per visit,
+bounce rate and average time are all ratios over it.
+
+### The graph API
+
+The dashboard is a client of four public endpoints; nothing it can show is
+unavailable to a script. All of them take `site`, `range`
+(`today`/`7d`/`30d`/`90d`/`12mo`, or explicit `from`/`to`), `cmp=1` for a
+previous-period comparison, and `f` for the filter stack.
+
+```
+GET /api/summary    ?range=30d&cmp=1     → totals, previous, and a per-metric series
+GET /api/timeseries ?metric=visitors     → [{ label, cur, prev }]
+GET /api/breakdown  ?dim=path,country    → one ranking per dimension, in one trip
+GET /api/realtime                        → { online, minutes: […30], recent: […] }
+```
+
+Filters are `f=dim:value` pairs, comma separated, values percent-encoded.
+Several values of one dimension mean *either*; two dimensions mean *both*:
+
+```
+/api/breakdown?dim=path&range=30d&f=country:DE,country:FR,device:Mobile
+```
+
+Filterable dimensions are `path`, `referrer`, `country`, `browser`, `os`,
+`device`, `screen` and the three `utm_*` tags. Rankings can also be asked for
+`entry`, `exit` and `event`.
 
 ## Privacy and GDPR
 
@@ -169,6 +270,7 @@ Set in `wrangler.jsonc` under `vars`:
 | Variable | Default | Notes |
 |---|---|---|
 | `HOURLY_RETENTION_DAYS` | `7` | How long hour-resolution data is kept. Daily rollups are kept forever regardless. |
+| `FILTERS` | `on` | Writes `stats_cube`, which is what makes the filter chips work. Set to `off` to trade filtering for a smaller write budget — see [What filtering costs](#what-filtering-costs). |
 | `PBKDF2_ITERATIONS` | `15000` | Deliberately below the usual 100k+. The Workers **free** plan allows 10 ms of CPU per request and a 100k-iteration derivation exceeds it, locking you out of your own dashboard. On the paid plan, raise this to `200000`. |
 
 ## Testing it
@@ -197,6 +299,20 @@ it exercises the whole pipeline, not just the database. Point it anywhere:
 npm run seed -- --url https://stats.example.com --domain example.com --events 500
 ```
 
+Everything above lands in the current hour, because timestamps are set
+server-side and there is no way to backdate a beacon. To fill a dashboard with
+something worth looking at — a trend, a comparison, weekday shape — write the
+history directly instead:
+
+```bash
+npm run seed -- --days 45 --domain example.com
+npx wrangler d1 execute edgemetry --local --file .seed.sql
+curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=20+0+*+*+*"
+```
+
+The last line folds every finished day into the rollups and the filter cube, so
+what you end up with is exactly what real traffic would have produced.
+
 ### Test from a real browser
 
 `scripts/demo-page.html` is a page with the snippet already installed. Serve it
@@ -217,8 +333,19 @@ attribute is the opt-in, and you remove it on a real site.
 ### Automated tests
 
 ```bash
-npm test        # 26 tests, inside the real Workers runtime with a real D1
+npm test        # 38 tests, inside the real Workers runtime with a real D1
 npm run typecheck
+```
+
+### Regenerating the bundled assets
+
+The dashboard's typefaces and its world map are generated files, checked in so
+that a clone builds without network access. Re-run these only if you want to
+change the projection, the canvas or the fonts:
+
+```bash
+npm run build:map     # src/world.ts   — Natural Earth 110m, Equal Earth projected
+npm run build:fonts   # src/fonts.ts   — Latin subsets of the three typefaces
 ```
 
 ### Testing the rollups
@@ -266,9 +393,15 @@ the schema is applied with `CREATE TABLE IF NOT EXISTS` on startup. Upgrading
 from a pre-user-model version also migrates the old single admin password into a
 real owner account, so nobody gets locked out.
 
-The one thing this does *not* do is `ALTER` existing tables. If a future change
-needs to modify a column rather than add a table, it needs explicit migration
-code keyed off the `schema_version` value in `settings`.
+Columns added by a later version are applied the same way, with `ALTER TABLE ADD
+COLUMN` run once per isolate and "already there" swallowed rather than tested
+for. That covers adding a table and adding a column; a change that needs to
+*modify* or drop a column would still need explicit migration code keyed off the
+`schema_version` value in `settings`.
+
+Upgrading is safe mid-hour: the raw table currently being written to was created
+by the previous version, so both the ingest path and the rollup widen it on
+demand before they touch it.
 
 ### Anyone who deployed *your* repo
 
@@ -308,8 +441,20 @@ Being upfront about these:
 - **Per-dimension visitor counts are an upper bound** for the same reason.
   Pageview counts are always exact.
 - **All bucketing is UTC.** There is no per-user timezone setting yet.
-- **No bounce rate or session duration.** Both need per-visitor session state
-  that would roughly double the write cost. Planned, but not free.
+- **Filtering by a path narrows to the visits that *started* there.** The cube
+  records where each visit began, not every page it passed through, so
+  "visitors" under a `path` filter means entrances. Pageviews under that filter
+  are exact, and the dashboard says which basis it is using. Filtering by
+  anything visit-stable — country, browser, device, referrer, UTM — is exact.
+- **Time on site excludes the last page of a visit**, because there is no unload
+  beacon to measure it with. A single-page visit therefore counts as zero
+  seconds. Every tool without an unload beacon has this floor; it is stated here
+  rather than papered over.
+- **Screen size is bucketed into four ranges** and the exact width is never
+  stored — it is too good a fingerprinting signal to keep for a chart.
+- **D1 caps a compound `SELECT` at five terms**, and a day is 24 raw hour tables.
+  Wide unions are nested into a tree of five-term compounds to get around it,
+  which is worth knowing before you edit any query that spans a whole day.
 - Ad blockers that block *all* beacon-shaped requests heuristically will still
   catch some traffic. First-party hosting plus a custom path defeats the common
   hostname and path rules, not every possible heuristic.

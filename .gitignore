@@ -6,3 +6,5 @@ dist/
 *.log
 .DS_Store
 .claude/
+# Written by `npm run seed -- --days N`
+.seed.sql

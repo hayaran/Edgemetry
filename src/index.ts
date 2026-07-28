@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 
 import {
@@ -9,14 +9,29 @@ import {
   readSession,
   sessionCookieOptions,
 } from './auth';
-import dashboardHtml from './dashboard.html';
+import dashboardTemplate from './dashboard.html';
 import { ensureSchema, getSetting, setSetting } from './db';
+import { FONT_FACE_CSS, FONT_FILES } from './fonts';
+import { isBreakdownDim } from './dimensions';
 import { corsPreflight, handleIngest } from './ingest';
 import { loginPage, setupPage } from './pages';
+import {
+  METRICS,
+  type Components,
+  type Metric,
+  loadBreakdowns,
+  loadRealtime,
+  loadSeries,
+  metricValue,
+  parseFilters,
+  resolveRange,
+  totalsFrom,
+} from './query';
 import { catchUpToday, dailyJob, hourlyJob } from './rollup';
 import { getStats } from './stats';
 import { dayOffset, isValidDay, partsFor } from './time';
 import { trackerResponse } from './tracker';
+import { WORLD_GEOMETRY } from './world';
 import {
   MIN_PASSWORD_LENGTH,
   type Role,
@@ -59,7 +74,15 @@ const RESERVED_PATHS = new Set([
 
 const DOMAIN_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
-const app = new Hono<{ Bindings: Env; Variables: { user: UserRow } }>();
+type AppEnv = { Bindings: Env; Variables: { user: UserRow } };
+type AppContext = Context<AppEnv>;
+
+const app = new Hono<AppEnv>();
+
+/** Writing the filter cube can be turned off on very high-traffic instances. */
+function cubeEnabled(env: Env): boolean {
+  return (env.FILTERS ?? 'on').toLowerCase() !== 'off';
+}
 
 function iterationsFor(env: Env): number {
   const parsed = Number.parseInt(env.PBKDF2_ITERATIONS ?? '', 10);
@@ -353,21 +376,44 @@ app.delete('/api/users/:id', async (c) => {
 
 /* ----------------------------------------------------------------- stats -- */
 
-app.get('/api/stats', async (c) => {
+type SiteRow = Awaited<ReturnType<typeof accessibleSites>>[number];
+
+/**
+ * The site the request is asking about, or a response explaining why not.
+ *
+ * Authorisation goes through the grant table rather than the list we happen to
+ * have rendered, so a crafted site id cannot read another tenant's numbers.
+ */
+async function resolveSite(c: AppContext): Promise<SiteRow | Response> {
   const user = c.get('user');
   const sites = await accessibleSites(c.env.DB, user);
   if (sites.length === 0) return c.json({ error: 'no sites available' }, 404);
 
   const requested = Number.parseInt(c.req.query('site') ?? '', 10);
-  let site = sites[0]!;
-  if (Number.isInteger(requested)) {
-    // Authorise against the grant table rather than the visible list, so a
-    // crafted site id cannot read another tenant's numbers.
-    if (!(await canAccessSite(c.env.DB, user, requested))) {
-      return c.json({ error: 'forbidden' }, 403);
-    }
-    site = sites.find((s) => s.id === requested) ?? site;
+  if (!Number.isInteger(requested)) return sites[0]!;
+  if (!(await canAccessSite(c.env.DB, user, requested))) {
+    return c.json({ error: 'forbidden' }, 403);
   }
+
+  // An owner passes the access check for any id, including one that does not
+  // exist — so the id still has to be resolved. Answering about a different
+  // site than the one asked for would be worse than an error.
+  const site = sites.find((s) => s.id === requested);
+  return site ?? c.json({ error: 'no such site' }, 404);
+}
+
+const NO_STORE = { 'cache-control': 'no-store' } as const;
+
+function summarize(components: Components): Record<Metric, number> {
+  return Object.fromEntries(METRICS.map((m) => [m, metricValue(m, components)])) as Record<
+    Metric,
+    number
+  >;
+}
+
+app.get('/api/stats', async (c) => {
+  const site = await resolveSite(c);
+  if (site instanceof Response) return site;
 
   const now = new Date();
   const today = partsFor(now).day;
@@ -381,10 +427,189 @@ app.get('/api/stats', async (c) => {
   await catchUpToday(c.env.DB, now);
 
   const stats = await getStats(c.env.DB, site.id, from, to, now);
-  return c.json({ site, stats }, 200, { 'cache-control': 'no-store' });
+  return c.json({ site, stats }, 200, NO_STORE);
+});
+
+/**
+ * Everything the console's header and hero need, in one request.
+ *
+ * The per-bucket series is returned for all five metrics rather than just the
+ * selected one, because the metric rail draws a sparkline for each and the
+ * numbers are already in hand — splitting them across five requests would cost
+ * five times the database work to show the same screen.
+ */
+app.get('/api/summary', async (c) => {
+  const site = await resolveSite(c);
+  if (site instanceof Response) return site;
+
+  const now = new Date();
+  const range = resolveRange(
+    c.req.query('range'),
+    c.req.query('from'),
+    c.req.query('to'),
+    now,
+  );
+  if (!range) return c.json({ error: 'invalid range' }, 400);
+  if (range.id === 'custom' && (!isValidDay(range.from) || !isValidDay(range.to))) {
+    return c.json({ error: 'invalid date range' }, 400);
+  }
+
+  const filters = parseFilters(c.req.query('f'));
+  const compare = c.req.query('cmp') === '1';
+
+  const started = Date.now();
+  await catchUpToday(c.env.DB, now);
+  const db = c.env.DB;
+
+  const [series, previousSeries] = await Promise.all([
+    loadSeries(db, site.id, range, range.from, range.to, filters, now),
+    compare
+      ? loadSeries(db, site.id, range, range.prevFrom, range.prevTo, filters, now)
+      : Promise.resolve(null),
+  ]);
+
+  const totals = totalsFrom(series);
+  const previousTotals = previousSeries ? totalsFrom(previousSeries) : null;
+
+  const per = (buckets: typeof series | null): Record<Metric, number[]> | null =>
+    buckets &&
+    (Object.fromEntries(
+      METRICS.map((m) => [m, buckets.map((b) => metricValue(m, b))]),
+    ) as Record<Metric, number[]>);
+
+  return c.json(
+    {
+      site,
+      range,
+      filters,
+      totals: summarize(totals),
+      previous: previousTotals ? summarize(previousTotals) : null,
+      series: {
+        labels: series.map((b) => b.label),
+        cur: per(series),
+        // Trimmed to the current window's length so the two line up point for
+        // point; a partial "today" must not be compared against a whole day.
+        prev: previousSeries ? per(previousSeries.slice(0, series.length)) : null,
+      },
+      // Under a path filter, visits are the ones that *started* on that path —
+      // the cube cannot know which other visits passed through it later.
+      visitsBasis: filters.some((f) => f.dim === 'path') ? 'entrances' : 'exact',
+      // Shown in the header. Being able to see what a page cost is the whole
+      // reason this design keeps a query time in the chrome.
+      meta: { ms: Date.now() - started, colo: (c.req.raw.cf?.colo as string | undefined) ?? '' },
+    },
+    200,
+    NO_STORE,
+  );
+});
+
+/** The documented single-metric series, for anything scripting against this. */
+app.get('/api/timeseries', async (c) => {
+  const site = await resolveSite(c);
+  if (site instanceof Response) return site;
+
+  const now = new Date();
+  const range = resolveRange(c.req.query('range'), c.req.query('from'), c.req.query('to'), now);
+  if (!range) return c.json({ error: 'invalid range' }, 400);
+
+  const requested = c.req.query('metric') ?? 'visitors';
+  if (!(METRICS as readonly string[]).includes(requested)) {
+    return c.json({ error: 'unknown metric' }, 400);
+  }
+  const metric = requested as Metric;
+  const filters = parseFilters(c.req.query('f'));
+  const compare = c.req.query('cmp') === '1';
+
+  await catchUpToday(c.env.DB, now);
+
+  const series = await loadSeries(c.env.DB, site.id, range, range.from, range.to, filters, now);
+  const previous = compare
+    ? await loadSeries(c.env.DB, site.id, range, range.prevFrom, range.prevTo, filters, now)
+    : [];
+
+  return c.json(
+    {
+      granularity: range.granularity,
+      points: series.map((bucket, i) => ({
+        label: bucket.label,
+        cur: metricValue(metric, bucket),
+        prev: previous[i] ? metricValue(metric, previous[i]!) : null,
+      })),
+    },
+    200,
+    NO_STORE,
+  );
+});
+
+/**
+ * Rank one or more dimensions. `?dim=path,country` answers both in one trip,
+ * which is what the console does — six panels, one request.
+ */
+app.get('/api/breakdown', async (c) => {
+  const site = await resolveSite(c);
+  if (site instanceof Response) return site;
+
+  const now = new Date();
+  const range = resolveRange(c.req.query('range'), c.req.query('from'), c.req.query('to'), now);
+  if (!range) return c.json({ error: 'invalid range' }, 400);
+
+  const dims = (c.req.query('dim') ?? 'path').split(',').map((d) => d.trim()).filter(isBreakdownDim);
+  if (dims.length === 0) return c.json({ error: 'unknown dimension' }, 400);
+
+  const parsed = Number.parseInt(c.req.query('limit') ?? '', 10);
+  const limit = Number.isInteger(parsed) ? Math.min(Math.max(parsed, 1), 50) : 10;
+  const filters = parseFilters(c.req.query('f'));
+
+  await catchUpToday(c.env.DB, now);
+
+  const breakdowns = await loadBreakdowns(c.env.DB, site.id, range, filters, dims, limit, now);
+
+  return c.json(
+    { breakdowns, rows: dims.length === 1 ? breakdowns[dims[0]!] : undefined },
+    200,
+    NO_STORE,
+  );
+});
+
+app.get('/api/realtime', async (c) => {
+  const site = await resolveSite(c);
+  if (site instanceof Response) return site;
+  return c.json(await loadRealtime(c.env.DB, site.id, new Date()), 200, NO_STORE);
+});
+
+/**
+ * Country outlines for the geography panel.
+ *
+ * Shipped with the Worker and served from our own origin rather than pulled
+ * from a CDN: a dashboard that phones out to a third party to draw a privacy
+ * tool would be an odd look, and it keeps the console working on a locked-down
+ * network. Immutable, so a browser fetches it once.
+ */
+app.get('/api/world.json', (c) =>
+  c.json(WORLD_GEOMETRY, 200, { 'cache-control': 'public, max-age=31536000, immutable' }),
+);
+
+/** The console's typefaces, for the same reason. See scripts/build-fonts.mjs. */
+app.get('/api/fonts/:file', (c) => {
+  const encoded = FONT_FILES[c.req.param('file')];
+  if (!encoded) return c.notFound();
+
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+  return c.body(bytes, 200, {
+    'content-type': 'font/woff2',
+    'cache-control': 'public, max-age=31536000, immutable',
+  });
 });
 
 /* ------------------------------------------------------------- dashboard -- */
+
+// The @font-face rules are generated alongside the font files, so the two
+// cannot drift; splicing them in once at module scope keeps the HTML a plain
+// static string.
+const dashboardHtml = dashboardTemplate.replace('/*fonts*/', FONT_FACE_CSS);
 
 app.get('/', async (c) => {
   if (!(await setupComplete(c.env))) return c.redirect('/setup', 302);
@@ -428,7 +653,7 @@ export default {
 
       try {
         if (controller.cron.startsWith('20 0 ')) {
-          await dailyJob(env.DB, now, Number.isFinite(retention) ? retention : 7);
+          await dailyJob(env.DB, now, Number.isFinite(retention) ? retention : 7, cubeEnabled(env));
         } else {
           await hourlyJob(env.DB, now);
         }

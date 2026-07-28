@@ -11,7 +11,9 @@
     "types": "wrangler types",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "seed": "node scripts/seed.mjs"
+    "seed": "node scripts/seed.mjs",
+    "build:map": "node scripts/build-map.mjs",
+    "build:fonts": "node scripts/build-fonts.mjs"
   },
   "dependencies": {
     "hono": "^4"
