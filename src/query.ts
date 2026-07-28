@@ -25,7 +25,7 @@
 
 import { rawTablesForDay, unionAll } from './db';
 import { FILTER_COLUMNS, type BreakdownDim } from './dimensions';
-import { partsFor } from './time';
+import { isValidDay, partsFor } from './time';
 
 export type Metric = 'visitors' | 'views' | 'vpv' | 'bounce' | 'time';
 
@@ -79,6 +79,9 @@ const RANGES: Record<string, { days: number; granularity: Granularity; prevLabel
 
 export const RANGE_IDS = Object.keys(RANGES);
 
+/** Upper bound on a custom range, so one bad query string cannot walk forever. */
+const MAX_RANGE_DAYS = 3660;
+
 function shiftDay(day: string, delta: number): string {
   const date = new Date(`${day}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + delta);
@@ -109,8 +112,13 @@ export function resolveRange(
   if (from || to) {
     const start = from ?? today;
     const end = to ?? today;
-    if (start > end) return null;
+    // Validated here rather than at each endpoint, because everything below
+    // walks the range a day at a time: a malformed or absurd pair would other-
+    // wise turn one mistyped bookmark into millions of iterations and a scan to
+    // match. Ten years is far past any real question and still bounded.
+    if (!isValidDay(start) || !isValidDay(end) || start > end) return null;
     const length = daysBetween(start, end);
+    if (length > MAX_RANGE_DAYS) return null;
     return {
       id: 'custom',
       from: start,

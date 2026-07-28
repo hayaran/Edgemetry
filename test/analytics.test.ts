@@ -709,6 +709,22 @@ describe('range and filter parsing', () => {
     });
   });
 
+  it('refuses a range it would have to walk forever', () => {
+    const now = new Date('2026-03-30T12:00:00Z');
+    // Every series and label helper steps through the range a day at a time, so
+    // an unbounded pair is a hang rather than a slow query.
+    expect(resolveRange(undefined, '1900-01-01', '2100-01-01', now)).toBeNull();
+    expect(resolveRange(undefined, 'garbage', '2026-03-30', now)).toBeNull();
+    expect(resolveRange(undefined, '2026-03-30', '2026-03-01', now)).toBeNull();
+    expect(resolveRange('nonsense', undefined, undefined, now)).toBeNull();
+
+    // A long but sane window still works.
+    expect(resolveRange(undefined, '2024-01-01', '2026-03-30', now)).toMatchObject({
+      from: '2024-01-01',
+      granularity: 'month',
+    });
+  });
+
   it('keeps colons and commas inside a filter value', () => {
     const filters = parseFilters(
       `path:${encodeURIComponent('/a,b')},referrer:${encodeURIComponent('example.com:8080')}`,

@@ -1588,14 +1588,11 @@ $('siteBtn').addEventListener('click', function (event) {
   popOpen ? closePop() : openPop();
 });
 
-function openPop() {
-  if (state.sites.length < 2) return;
-  popOpen = true;
-  $('siteBtn').setAttribute('aria-expanded', 'true');
+/** Fills the open popover in place. Never opens or closes it — see openPop. */
+function paintPop() {
+  var host = $('sitePop');
+  if (!host) return;
 
-  var host = document.createElement('div');
-  host.className = 'pop';
-  host.id = 'sitePop';
   host.innerHTML = state.sites.map(function (site) {
     var stats = state.siteStats[site.id];
     return '<button data-site="' + site.id + '">' +
@@ -1606,9 +1603,24 @@ function openPop() {
       '<span style="width:78px;flex:none">' +
       (stats ? sparkline(stats.series.cur.visitors, site.id === state.site) : '') + '</span></button>';
   }).join('');
+}
 
+function openPop() {
+  if (state.sites.length < 2) return;
+  popOpen = true;
+  $('siteBtn').setAttribute('aria-expanded', 'true');
+
+  var host = document.createElement('div');
+  host.className = 'pop';
+  host.id = 'sitePop';
   $('siteBtn').parentNode.appendChild(host);
-  loadSiteStats().then(function () { if (popOpen) { closePop(); openPop(); } });
+  paintPop();
+
+  // Repaint once the numbers land. This must not reopen the popover: when the
+  // stats are already cached loadSiteStats resolves immediately, and reopening
+  // would schedule another immediate resolve — a microtask loop that never
+  // yields the main thread.
+  loadSiteStats().then(paintPop);
 }
 
 function closePop() {

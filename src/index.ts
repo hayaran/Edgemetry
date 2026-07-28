@@ -450,9 +450,6 @@ app.get('/api/summary', async (c) => {
     now,
   );
   if (!range) return c.json({ error: 'invalid range' }, 400);
-  if (range.id === 'custom' && (!isValidDay(range.from) || !isValidDay(range.to))) {
-    return c.json({ error: 'invalid date range' }, 400);
-  }
 
   const filters = parseFilters(c.req.query('f'));
   const compare = c.req.query('cmp') === '1';
