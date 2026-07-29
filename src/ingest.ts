@@ -84,16 +84,12 @@ function screenBucket(raw: unknown): string {
   return '< 768px';
 }
 
-/** Cached only for the hour currently being written to; a new hour re-checks. */
-let ensuredTable: string | null = null;
-
 async function insertEvent(db: D1Database, table: string, values: unknown[]): Promise<void> {
   const placeholders = RAW_COLUMNS.split(',').map(() => '?').join(', ');
   const sql = `INSERT INTO ${table} (${RAW_COLUMNS}) VALUES (${placeholders})`;
 
   try {
     await db.prepare(sql).bind(...values).run();
-    ensuredTable = table;
     return;
   } catch (error) {
     const message = String(error);
@@ -112,15 +108,47 @@ async function insertEvent(db: D1Database, table: string, values: unknown[]): Pr
   }
 
   await db.prepare(sql).bind(...values).run();
-  ensuredTable = table;
+}
+
+/**
+ * Read a body of at most `limit` bytes, or null if it runs past that.
+ *
+ * The Content-Length check upstream only catches clients that declare their
+ * size honestly. Reading the stream chunk by chunk and cancelling it at the
+ * cap is what stops a chunked or mislabelled body from being buffered whole.
+ */
+async function readBounded(request: Request, limit: number): Promise<string | null> {
+  if (!request.body) return '';
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 export async function handleIngest(request: Request, env: Env): Promise<Response> {
   const declaredLength = Number(request.headers.get('content-length') ?? '0');
   if (declaredLength > MAX_BODY_BYTES) return beaconResponse(413, 'payload too large');
 
-  const raw = await request.text();
-  if (raw.length > MAX_BODY_BYTES) return beaconResponse(413, 'payload too large');
+  const raw = await readBounded(request, MAX_BODY_BYTES);
+  if (raw === null) return beaconResponse(413, 'payload too large');
 
   let payload: EventPayload;
   try {
