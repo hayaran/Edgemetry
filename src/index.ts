@@ -32,6 +32,8 @@ import { catchUpToday, dailyJob, hourlyJob } from './rollup';
 import { getStats } from './stats';
 import { dayOffset, isValidDay, partsFor } from './time';
 import { trackerResponse } from './tracker';
+import { checkForUpdate, readUpdateStatus } from './update';
+import { VERSION } from './version';
 import { WORLD_GEOMETRY } from './world';
 import {
   MIN_PASSWORD_LENGTH,
@@ -315,6 +317,12 @@ app.get('/api/me', async (c) => {
     // Empty unless an owner set it, in which case the console shows this
     // instead of guessing its own origin. See PUT /api/settings/tracker-url.
     trackerUrl: (await getSetting(c.env.DB, SETTING_TRACKER_URL)) ?? '',
+    // What this build calls itself, so the console can say so without a second
+    // round trip. Everyone sees it; it is the answer to "which one am I on".
+    version: VERSION,
+    // Owners only. A viewer cannot deploy anything, so telling them the
+    // instance is behind is a nag pointed at the wrong person.
+    update: isOwner(user) ? await readUpdateStatus(c.env.DB) : null,
   });
 });
 
@@ -805,8 +813,10 @@ export default {
       const now = new Date(controller.scheduledTime);
       const retention = Number.parseInt(env.HOURLY_RETENTION_DAYS ?? '', 10);
 
+      const daily = controller.cron.startsWith('20 0 ');
+
       try {
-        if (controller.cron.startsWith('20 0 ')) {
+        if (daily) {
           await dailyJob(env.DB, now, Number.isFinite(retention) ? retention : 7, cubeEnabled(env));
         } else {
           await hourlyJob(env.DB, now);
@@ -814,6 +824,17 @@ export default {
       } catch (error) {
         console.error(JSON.stringify({ level: 'error', job: controller.cron, message: String(error) }));
         throw error;
+      }
+
+      // Deliberately after the rollup and in its own try: GitHub being
+      // unreachable at 00:20 is not a reason to lose a day of stats, and a
+      // thrown error here would retry the whole invocation, rollup included.
+      if (daily) {
+        try {
+          await checkForUpdate(env);
+        } catch (error) {
+          console.error(JSON.stringify({ level: 'warn', job: 'update-check', message: String(error) }));
+        }
       }
     };
 

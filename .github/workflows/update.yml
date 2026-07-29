@@ -1,0 +1,127 @@
+name: Update Edgemetry
+
+# Nothing in here runs on its own.
+#
+# The deploy button *imports* this repository into your account rather than
+# forking it, so your copy has no parent and GitHub never offers you the "Sync
+# fork" button. This workflow is the replacement for that button: open Actions →
+# Update Edgemetry → Run workflow, and it opens a pull request carrying
+# upstream's newest release. Merging that pull request is what deploys —
+# until you merge, nothing about your instance changes.
+#
+# To also have it look on its own every Monday morning, set the repository
+# variable AUTO_UPDATE_PR to "on" under Settings → Secrets and variables →
+# Actions → Variables. Even then it only ever opens a pull request; the deploy
+# still waits for a human to merge it.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Two of these racing would fight over the same branch.
+concurrency:
+  group: edgemetry-update
+
+env:
+  UPSTREAM: https://github.com/hayaran/Edgemetry.git
+  BRANCH: edgemetry-update
+
+jobs:
+  update:
+    # The schedule is written above so nobody has to author YAML to get it, and
+    # gated here so nobody gets it without asking. Variable unset — which is how
+    # every copy starts — means this job runs only when you press the button.
+    if: github.event_name == 'workflow_dispatch' || vars.AUTO_UPDATE_PR == 'on'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream "$UPSTREAM"
+          git fetch --tags upstream main
+
+      - name: Compose the update commit
+        id: compose
+        env:
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git config user.name 'edgemetry-update'
+          git config user.email 'edgemetry-update@users.noreply.github.com'
+
+          if git diff --quiet "origin/$BASE" upstream/main; then
+            echo 'Already running the newest upstream tree — nothing to open.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # An imported repository shares no history with upstream, so a merge
+          # has no common ancestor to work from and would ask about every file
+          # that has changed since the import. Taking upstream's tree wholesale
+          # and then re-parenting it onto ours sidesteps that entirely: `reset
+          # --hard` makes the tree upstream's, `reset --soft` puts our history
+          # back under it, and what is left staged is the difference. One
+          # ordinary commit, no conflicts, and a diff that reads normally.
+          git switch --force-create "$BRANCH" "origin/$BASE"
+          git reset --hard upstream/main
+          git reset --soft "origin/$BASE"
+
+          VERSION=$(sed -n "s/.*VERSION = '\(.*\)'.*/\1/p" src/version.ts)
+          : "${VERSION:=unknown}"
+          git commit --quiet -m "Update Edgemetry to v${VERSION}"
+          git push --force origin "$BRANCH"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo 'opened=yes' >> "$GITHUB_OUTPUT"
+
+      - name: Open the pull request
+        if: steps.compose.outputs.opened
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.event.repository.default_branch }}
+          VERSION: ${{ steps.compose.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          open=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty')
+          if [ -n "$open" ]; then
+            echo "Updated the pull request that was already open: $open" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          body=$(printf '%s\n' \
+            "Upstream release notes: https://github.com/hayaran/Edgemetry/releases" \
+            "" \
+            "This commit replaces every tracked file with upstream's copy. Your data" \
+            "is not in this repository and neither is your configuration — the sites," \
+            "users and tracker URL live in D1, and the database binding and custom" \
+            "domain live in Cloudflare. All of that survives the deploy untouched." \
+            "" \
+            "What the diff *will* show is any edit you made to the files themselves." \
+            "Read it before merging if that might be you. Merging deploys; closing" \
+            "this changes nothing.")
+
+          # Opening a pull request as the Actions bot is off by default on new
+          # repositories, so a failure here is expected rather than exceptional.
+          # The branch is already pushed either way — the compare link finishes
+          # the job by hand in one click.
+          if ! gh pr create --base "$BASE" --head "$BRANCH" \
+               --title "Update Edgemetry to v${VERSION}" --body "$body" \
+               >> "$GITHUB_STEP_SUMMARY"; then
+            {
+              echo 'Could not open the pull request automatically. That permission is'
+              echo 'off by default — Settings → Actions → General → Workflow permissions'
+              echo '→ "Allow GitHub Actions to create and approve pull requests".'
+              echo ''
+              echo "The update is pushed and waiting either way:"
+              echo "https://github.com/${GITHUB_REPOSITORY}/compare/${BASE}...${BRANCH}?expand=1"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

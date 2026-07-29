@@ -5,8 +5,9 @@ on:
     branches: [main]
   pull_request:
 
-# A fork that syncs from upstream should be able to see, at a glance, that the
-# version it is about to deploy type-checks and passes its tests. The suite runs
+# Anyone taking an update should be able to see, at a glance, that the version
+# they are about to deploy type-checks and passes its tests — including on the
+# pull request the update workflow opens in their own copy. The suite runs
 # inside the real Workers runtime via @cloudflare/vitest-pool-workers, so a pass
 # here means the same code paths the Worker uses actually ran.
 jobs:
@@ -21,6 +22,18 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      # One version, two files that have to agree: the constant the Worker
+      # reports to the console and the manifest everything else reads. Drift
+      # means an instance claiming to be on a release nobody ever tagged.
+      - name: Version constant matches package.json
+        run: |
+          manifest=$(node -p "require('./package.json').version")
+          constant=$(sed -n "s/.*VERSION = '\(.*\)'.*/\1/p" src/version.ts)
+          if [ "$manifest" != "$constant" ]; then
+            echo "package.json says $manifest, src/version.ts says $constant"
+            exit 1
+          fi
 
       # worker-configuration.d.ts is committed, so this only fails if it has
       # drifted from wrangler.jsonc — which is exactly when it should.

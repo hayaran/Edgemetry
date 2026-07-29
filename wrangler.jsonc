@@ -49,7 +49,15 @@
     // PBKDF2 iterations for the admin password. The Workers *free* plan caps
     // CPU at 10ms per request, which is why this is not the usual 100k+.
     // On the $5/mo paid plan you can safely raise this to 200000.
-    "PBKDF2_ITERATIONS": "15000"
+    "PBKDF2_ITERATIONS": "15000",
+    // Once a day, beside the nightly rollup, the Worker asks GitHub for the
+    // newest Edgemetry release and stores the answer so the account menu can
+    // say whether this instance is behind. It is the only request this project
+    // makes to anyone, it happens on a cron rather than in anybody's browser,
+    // and it says nothing about you beyond the version it is asking about.
+    // Set to "off" to never make it — updates then become something you go
+    // looking for. See the update workflow under .github/workflows.
+    "UPDATE_CHECK": "on"
   }
 
   // Note: the URL the dashboard prints in its install snippet is deliberately

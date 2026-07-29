@@ -38,6 +38,16 @@ import {
   resolveRange,
 } from '../src/query';
 import { normalizeTrackerUrl } from '../src/index';
+import {
+  SETTING_UPDATE,
+  checkForUpdate,
+  isNewer,
+  parseVersion,
+  readUpdateStatus,
+  releaseTags,
+  statusFrom,
+} from '../src/update';
+import { VERSION } from '../src/version';
 import { catchUpToday, rollupDay, rollupHour } from '../src/rollup';
 import { getStats } from '../src/stats';
 import { dayOffset, hourSuffixesForDay, partsFor, partsForTs } from '../src/time';
@@ -791,6 +801,145 @@ describe('the signed-out surfaces every deployment exposes', () => {
       const response = await SELF.fetch(`https://analytics.example.com${path}`, { method: 'POST' });
       expect(response.status).toBe(404);
     }
+  });
+});
+
+describe('the update check', () => {
+  // A trimmed releases feed, shaped like the one github.com serves: entry
+  // titles are prose, and the tag only appears in the link.
+  const feed = `<?xml version="1.0" encoding="UTF-8"?>
+    <feed xmlns="http://www.w3.org/2005/Atom">
+      <link type="text/html" rel="alternate" href="https://github.com/hayaran/Edgemetry/releases"/>
+      <entry>
+        <title>The one with the world map</title>
+        <link rel="alternate" type="text/html" href="https://github.com/hayaran/Edgemetry/releases/tag/v0.3.0"/>
+      </entry>
+      <entry>
+        <title>v0.2.0</title>
+        <link rel="alternate" type="text/html" href="https://github.com/hayaran/Edgemetry/releases/tag/v0.2.0"/>
+      </entry>
+      <entry>
+        <title>First cut</title>
+        <link rel="alternate" type="text/html" href="https://github.com/hayaran/Edgemetry/releases/tag/v0.1.0"/>
+      </entry>
+    </feed>`;
+
+  it('reads tags out of the links rather than the titles', () => {
+    expect(releaseTags(feed)).toEqual(['v0.3.0', 'v0.2.0', 'v0.1.0']);
+  });
+
+  it('ignores the feed-level link, which has no tag segment', () => {
+    expect(releaseTags('<link href="https://github.com/hayaran/Edgemetry/releases"/>')).toEqual([]);
+  });
+
+  it('compares versions numerically, not lexically', () => {
+    expect(isNewer('v0.10.0', 'v0.9.0')).toBe(true);
+    expect(isNewer('v1.0.0', 'v0.99.99')).toBe(true);
+    expect(isNewer('v0.1.0', 'v0.1.0')).toBe(false);
+    expect(isNewer('v0.1.0', 'v0.2.0')).toBe(false);
+  });
+
+  it('treats anything that is not a plain release tag as no answer at all', () => {
+    expect(parseVersion('v1.2.3-rc.1')).toBeNull();
+    expect(parseVersion('nightly')).toBeNull();
+    // A prerelease upstream must not be counted as something to move to.
+    expect(isNewer('v9.9.9-beta', 'v0.1.0')).toBe(false);
+  });
+
+  it('counts how many releases a build is behind and points at the newest', () => {
+    const status = statusFrom(feed, 'v0.1.0');
+    expect(status.behind).toBe(2);
+    expect(status.latest).toBe('v0.3.0');
+    expect(status.url).toBe('https://github.com/hayaran/Edgemetry/releases/tag/v0.3.0');
+  });
+
+  it('reports an up-to-date build as behind by nothing', () => {
+    const status = statusFrom(feed, 'v0.3.0');
+    expect(status.behind).toBe(0);
+    expect(status.latest).toBe('v0.3.0');
+    expect(status.url).toBe('https://github.com/hayaran/Edgemetry/releases');
+  });
+
+  it('clears a stale answer once the running build has caught up', async () => {
+    // Written by the cron before the update, and still sitting there after the
+    // deploy that acted on it. VERSION is what the build actually is.
+    await setSetting(
+      db,
+      SETTING_UPDATE,
+      JSON.stringify({ current: '0.0.1', latest: VERSION, behind: 4, url: 'x', checked: 0 }),
+    );
+
+    const status = await readUpdateStatus(db);
+    expect(status?.behind).toBe(0);
+    expect(status?.current).toBe(VERSION);
+  });
+
+  it('keeps a genuinely newer answer, restated against this build', async () => {
+    await setSetting(
+      db,
+      SETTING_UPDATE,
+      JSON.stringify({ current: '0.0.1', latest: 'v99.0.0', behind: 1, url: 'x', checked: 0 }),
+    );
+
+    const status = await readUpdateStatus(db);
+    expect(status?.behind).toBe(1);
+    expect(status?.latest).toBe('v99.0.0');
+    expect(status?.current).toBe(VERSION);
+  });
+
+  it('says nothing when the cron has never run, or wrote nonsense', async () => {
+    expect(await readUpdateStatus(db)).toBeNull();
+    await setSetting(db, SETTING_UPDATE, 'not json');
+    expect(await readUpdateStatus(db)).toBeNull();
+  });
+
+  it('makes no request at all when UPDATE_CHECK is off', async () => {
+    // If it tried, `fetch` here would reach for the network and the test would
+    // not resolve to null.
+    expect(await checkForUpdate({ ...env, UPDATE_CHECK: 'off' } as unknown as Env)).toBeNull();
+  });
+
+  it('offers the update line to an owner and withholds it from a viewer', async () => {
+    const password = 'correct horse battery staple';
+    const iterations = Number(env.PBKDF2_ITERATIONS ?? '15000');
+
+    await createFirstOwner(db, 'owner@example.com', password, iterations);
+    await createUser(
+      db,
+      { email: 'viewer@example.com', password, role: 'viewer', siteIds: [1] },
+      iterations,
+    );
+    await setSetting(
+      db,
+      SETTING_UPDATE,
+      JSON.stringify({ current: VERSION, latest: 'v99.0.0', behind: 1, url: 'x', checked: 0 }),
+    );
+
+    /** Sign in over HTTP and read /api/me the way the console does. */
+    const meAs = async (email: string): Promise<Record<string, unknown>> => {
+      const login = await SELF.fetch('https://analytics.example.com/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ email, password }),
+        redirect: 'manual',
+      });
+      expect(login.status).toBe(302);
+
+      const cookie = (login.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+      const response = await SELF.fetch('https://analytics.example.com/api/me', {
+        headers: { cookie },
+      });
+      expect(response.status).toBe(200);
+      return await response.json();
+    };
+
+    const owner = await meAs('owner@example.com');
+    expect(owner.update).toMatchObject({ behind: 1, latest: 'v99.0.0' });
+
+    const viewer = await meAs('viewer@example.com');
+    expect(viewer.update).toBeNull();
+    // The version itself is not a secret — knowing it is how anyone reports a bug.
+    expect(viewer.version).toBe(VERSION);
   });
 });
 
