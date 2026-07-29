@@ -1,0 +1,63 @@
+# Publish the static demo to GitHub Pages.
+#
+# The demo page is generated from src/dashboard.html on every push, which is the
+# whole reason it can be trusted: there is no checked-in copy of the console to
+# fall out of date with the console. The contract test runs first, so a change
+# to the API shape that scripts/demo-mock.js has not followed fails here instead
+# of quietly breaking the demo.
+#
+# One-time setup: Settings › Pages › Source › GitHub Actions.
+
+name: demo
+
+on:
+  push:
+    branches: [main]
+  # So the demo can be republished without an empty commit.
+  workflow_dispatch:
+
+# Pages needs these; the job itself writes nothing back to the repository.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# A queued run should wait for the one in flight rather than cancel it — a
+# half-published site is worse than a slightly stale one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check the mock still matches the API
+        run: npm test
+
+      - run: npm run build:demo
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: demo-dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

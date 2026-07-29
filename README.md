@@ -7,6 +7,10 @@ Built for the case where Google Analytics is overkill, Plausible Cloud is a
 recurring bill, and a VPS running Docker is more infrastructure than a personal
 site deserves.
 
+**[Try the demo →](https://hayaran.github.io/Edgemetry/)** — the real
+dashboard, running on made-up traffic. No sign-in, nothing to install. Click a
+row and watch every panel narrow.
+
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/nitinhayaran/Edgemetry)
 
 
@@ -428,6 +432,38 @@ change the projection, the canvas or the fonts:
 npm run build:map     # src/world.ts   — Natural Earth 110m, Equal Earth projected
 npm run build:fonts   # src/fonts.ts   — Latin subsets of the three typefaces
 ```
+
+### The demo site
+
+[The demo](https://hayaran.github.io/Edgemetry/) is this dashboard with a
+fake back end, served from GitHub Pages. There is no Worker behind it and no
+database — `scripts/demo-mock.js` patches `fetch` before the console boots and
+answers the same six endpoints out of a synthetic corpus it generates in the
+browser.
+
+```bash
+npm run build:demo    # demo-dist/ — the page, the mock, the map, the fonts
+npx serve demo-dist   # or any static server
+```
+
+The interesting part is what keeps it honest, because a stale demo is worse than
+no demo:
+
+- **The page cannot drift from the console.** `scripts/build-demo.mjs` generates
+  it from `src/dashboard.html` — it does not copy it — and CI rebuilds on every
+  push to `main`. A UI change ships to the demo in the same commit that makes it.
+- **The data cannot go stale.** No dates are baked in. Events are generated at
+  offsets from whenever you open the page, so the demo is always the last six
+  months ending today, with a realtime panel that moves. The seed is fixed, so
+  everyone looking at it on the same day sees the same numbers.
+- **The API shape cannot drift silently.** `test/demo.test.ts` runs the real
+  Worker and the mock side by side and compares the structure of every response.
+  Add a field to `/api/summary` without teaching the mock about it and the build
+  goes red — which is how `trackerUrl` was caught the first time.
+
+Everything is computed per request rather than served from fixtures, so filters
+stack, ranges re-bucket, comparison works and `⌘K` searches — the demo behaves
+like the product because it *is* the product, only lying about the numbers.
 
 ### Testing the rollups
 
