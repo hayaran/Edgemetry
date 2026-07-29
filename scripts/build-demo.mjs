@@ -20,7 +20,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { mkdir, copyFile, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -32,11 +32,11 @@ const out = join(root, 'demo-dist');
  * Import a `.ts` module that is a data literal rather than real TypeScript.
  *
  * src/fonts.ts and src/world.ts are megabyte-scale literals produced by the
- * build:fonts and build:map scripts, and src/favicon.ts is a hand-written one.
- * All three are already valid JavaScript apart from a type annotation and an
- * `as const`, so stripping those two is cheaper and far less fragile than
- * pulling a TypeScript compiler into a script that only needs three constants
- * out of them.
+ * build:fonts and build:map scripts; src/favicon.ts and src/version.ts are
+ * hand-written ones. All four are already valid JavaScript apart from a type
+ * annotation and an `as const`, so stripping those two is cheaper and far less
+ * fragile than pulling a TypeScript compiler into a script that only needs a
+ * few constants out of them.
  */
 async function importGenerated(file) {
   const source = (await readFile(join(root, 'src', file), 'utf8'))
@@ -54,11 +54,13 @@ async function mkdtempish() {
   return dir;
 }
 
-const [{ FONT_FACE_CSS, FONT_FILES }, { WORLD_GEOMETRY }, { FAVICON_SVG }] = await Promise.all([
-  importGenerated('fonts.ts'),
-  importGenerated('world.ts'),
-  importGenerated('favicon.ts'),
-]);
+const [{ FONT_FACE_CSS, FONT_FILES }, { WORLD_GEOMETRY }, { FAVICON_SVG }, { VERSION }] =
+  await Promise.all([
+    importGenerated('fonts.ts'),
+    importGenerated('world.ts'),
+    importGenerated('favicon.ts'),
+    importGenerated('version.ts'),
+  ]);
 
 await rm(out, { recursive: true, force: true });
 await mkdir(join(out, 'fonts'), { recursive: true });
@@ -156,7 +158,17 @@ await writeFile(join(out, 'index.html'), html);
 
 /* ----------------------------------------------------------------- assets -- */
 
-await copyFile(join(root, 'scripts', 'demo-mock.js'), join(out, 'demo-mock.js'));
+// Copied with one substitution: the mock answers /api/me, and that response
+// now carries the version the console prints in its account menu.
+await writeFile(
+  join(out, 'demo-mock.js'),
+  replaceOnce(
+    await readFile(join(root, 'scripts', 'demo-mock.js'), 'utf8'),
+    "var VERSION = '0.0.0';",
+    `var VERSION = '${VERSION}';`,
+    'the demo version constant',
+  ),
+);
 
 await writeFile(join(out, 'world.json'), JSON.stringify(WORLD_GEOMETRY));
 

@@ -81,6 +81,13 @@
    */
   var DEMO_ROLE = 'viewer';
 
+  /**
+   * Rewritten by scripts/build-demo.mjs from src/version.ts, so the account
+   * menu in the demo names the build the demo was cut from. The update line
+   * never appears here: it is owner-only, and the demo account is a viewer.
+   */
+  var VERSION = '0.0.0';
+
   var READ_ONLY = 'Read-only demo — deploy your own to change anything.';
 
   /* ====================================================== distributions === */
@@ -858,7 +865,9 @@
     if (path.endsWith('/api/world.json')) return realFetch(WORLD_URL, init);
 
     var params = url.searchParams;
-    if (path.endsWith('/api/me')) return Promise.resolve(json({ user: ME, trackerUrl: TRACKER_URL }));
+    if (path.endsWith('/api/me')) {
+      return Promise.resolve(json({ user: ME, trackerUrl: TRACKER_URL, version: VERSION, update: null }));
+    }
     if (path.endsWith('/api/sites')) return Promise.resolve(json({ sites: [SITE] }));
     if (path.endsWith('/api/summary')) return Promise.resolve(summary(params));
     if (path.endsWith('/api/breakdown')) return Promise.resolve(breakdown(params));

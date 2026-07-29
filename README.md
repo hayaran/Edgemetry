@@ -32,8 +32,11 @@ row and watch every panel narrow.
 - **Multiple sites and multiple users** on one deployment, with per-site access
 - **Unlimited history** — daily rollups are never deleted
 - **No cookies, no fingerprinting, no personal data at rest**
-- **No third-party requests anywhere** — not on your site, not in the dashboard.
-  The fonts and the world map ship inside the Worker
+- **No third-party requests from any browser** — not on your site, not in the
+  dashboard. The fonts and the world map ship inside the Worker. The only call
+  this project ever makes to anyone is a nightly release check from the Worker
+  itself, so it can tell you when you are behind, and
+  [`UPDATE_CHECK: "off"`](#configuration) stops even that
 - **~2.1 KB tracking script**, served from your own domain
 
 ## Getting started
@@ -303,6 +306,7 @@ Set in `wrangler.jsonc` under `vars`:
 | `HOURLY_RETENTION_DAYS` | `7` | How long hour-resolution data is kept. Daily rollups are kept forever regardless. |
 | `FILTERS` | `on` | Writes `stats_cube`, which is what makes the filter chips work. Set to `off` to trade filtering for a smaller write budget — see [What filtering costs](#what-filtering-costs). |
 | `PBKDF2_ITERATIONS` | `15000` | **A CPU budget concession, not a secure default.** OWASP's figure for PBKDF2-HMAC-SHA256 is 600,000; this is 15,000 because the Workers **free** plan allows 10 ms of CPU per request. The edge rate limit is what compensates. Raising it has a sharp edge — see [POST-DEPLOY.md](POST-DEPLOY.md#10-tune-the-configuration-vars). |
+| `UPDATE_CHECK` | `on` | Once a day the nightly cron asks GitHub for the newest Edgemetry release, so the account menu can say whether you are behind — see [Updating a deployment](#updating-a-deployment). Set to `off` to make no such request. |
 
 That is the whole list, and none of it is required — the defaults are the intended
 configuration. One setting deliberately sits outside this table: **Script URL**,
@@ -475,11 +479,54 @@ Upgrading is safe mid-hour: the raw table currently being written to was created
 by the previous version, so both the ingest path and the rollup widen it on
 demand before they touch it.
 
-### Anyone who deployed *your* repo
+### Knowing there is something to take
 
-The button copies the repository into their account, so their instance tracks
-their copy, not yours. To take an update they click **Sync fork** on GitHub and
-CI redeploys. Worth saying plainly in your release notes.
+The deploy button *imports* this repository into your account rather than forking
+it. Your copy has no parent, which means no **Sync fork** button, no "N commits
+behind" banner, and a compare view GitHub will refuse — two repositories with no
+shared history have nothing to compare. Left alone, an instance would sit on old
+code with nothing anywhere saying so.
+
+So the instance tells you. Once a day, beside the nightly rollup, the Worker asks
+GitHub for the newest release and stores the answer; if it is ahead of you, the
+account menu carries a line saying how far:
+
+> **Update available** — 2 releases behind
+
+It links to the release notes, which are what you actually want before deciding.
+The check is the only request this project makes to anyone, it runs on a cron
+rather than in a browser, and it says nothing about your instance beyond the
+version it is asking about. `UPDATE_CHECK: "off"` in `wrangler.jsonc` stops it.
+Owners see the line; viewers do not, since they cannot act on it. The version you
+are running is in that menu either way, next to your role.
+
+### Taking the update
+
+**Actions → Update Edgemetry → Run workflow**, in your own copy of the
+repository. It fetches upstream, composes the new version as a single ordinary
+commit, and opens a pull request. Merging is what deploys — CI runs on the pull
+request first, so you can see it type-checks and passes its tests before you do.
+
+Nothing about that is automatic. The workflow has no trigger but the button
+unless you set the repository variable `AUTO_UPDATE_PR` to `on` (Settings →
+Secrets and variables → Actions → Variables), and even then it only opens the
+pull request; the deploy still waits for you to merge it.
+
+The commit it composes replaces every tracked file with upstream's copy — that is
+what lets it apply to an imported repository with no conflicts at all. Your data
+and your configuration are somewhere else entirely (D1 and Cloudflare
+respectively) and are untouched, but if you have *edited* files in your copy, the
+diff is where you will see them go. Read it before merging.
+
+From a terminal, the same thing by hand:
+
+```bash
+git remote add upstream https://github.com/hayaran/Edgemetry.git
+```
+
+```bash
+git fetch upstream main && git switch -c update && git reset --hard upstream/main && git reset --soft main && git commit -m "Update Edgemetry"
+```
 
 ### One footgun worth knowing
 
@@ -494,9 +541,12 @@ Being upfront about these:
 - **A GitHub or GitLab account is required for the deploy button**, because it
   copies the repository into your account to wire up CI/CD. The terminal route
   (`npx wrangler deploy`) does not need one.
-- **Updates require syncing your fork.** Your deployment tracks your copy of the
-  repository, so pulling in later improvements means clicking "Sync fork" on
-  GitHub and letting CI redeploy.
+- **Updates are something you take, not something you get.** Your deployment runs
+  your copy of the repository, and the button imports rather than forks it, so
+  GitHub offers no Sync fork button to press. The account menu tells you when a
+  release is out and a workflow opens the pull request — two clicks and a merge,
+  covered under [Updating a deployment](#updating-a-deployment) — but neither
+  happens on its own.
 - **Unique visitors over multi-day ranges are summed daily totals**, so a person
   visiting on Monday and Tuesday counts twice. This is unavoidable given a salt
   that rotates daily, and it is exactly what Plausible and GoatCounter do. Single
