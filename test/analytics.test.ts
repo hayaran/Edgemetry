@@ -35,6 +35,7 @@ import {
   parseFilters,
   resolveRange,
 } from '../src/query';
+import { normalizeTrackerUrl } from '../src/index';
 import { catchUpToday, rollupDay, rollupHour } from '../src/rollup';
 import { getStats } from '../src/stats';
 import { dayOffset, hourSuffixesForDay, partsFor, partsForTs } from '../src/time';
@@ -739,6 +740,27 @@ describe('range and filter parsing', () => {
     // An old bookmark should widen the view, not render an error page.
     expect(parseFilters('nonsense:x,path:/a,path:/a')).toEqual([{ dim: 'path', value: '/a' }]);
     expect(parseFilters(undefined)).toEqual([]);
+  });
+});
+
+describe('tracker url override', () => {
+  it('accepts empty as "work it out from this origin"', () => {
+    expect(normalizeTrackerUrl('')).toBe('');
+    expect(normalizeTrackerUrl('   ')).toBe('');
+  });
+
+  it('keeps a full URL on another hostname, which is the Access arrangement', () => {
+    expect(normalizeTrackerUrl('https://t.example.com/xyz.js')).toBe('https://t.example.com/xyz.js');
+    expect(normalizeTrackerUrl('  https://t.example.com/em.js  ')).toBe('https://t.example.com/em.js');
+  });
+
+  it('rejects a URL that would break the endpoint the script derives', () => {
+    // No `.js` to strip means the beacon posts to the script's own path and is
+    // answered with the script — tracking that fails without saying so.
+    expect(normalizeTrackerUrl('https://t.example.com/em')).toBeNull();
+    expect(normalizeTrackerUrl('t.example.com/em.js')).toBeNull();
+    expect(normalizeTrackerUrl('/em.js')).toBeNull();
+    expect(normalizeTrackerUrl('javascript:alert(1)//em.js')).toBeNull();
   });
 });
 
