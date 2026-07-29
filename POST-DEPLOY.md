@@ -206,7 +206,7 @@ list has to match whichever filename you chose in step 7, and if you ever rename
 that file, tracking dies silently behind a login page.
 
 **Once the two hostnames are up, tell the dashboard about the public one.** Under
-**Install & sites → Script URL**, set it to `https://t.example.com/em.js`. This
+**Settings → Script URL**, set it to `https://t.example.com/em.js`. This
 matters more than it looks: left empty, the console builds its install snippet
 from its own origin, which is now the hostname *behind Access*. Paste that into
 your site and every visitor beacon is answered with a login page instead of being
@@ -248,7 +248,7 @@ can use a different path and no single path-based blocklist rule matches them al
 Change the `src` in your snippet; nothing else needs to know.
 
 The dashboard cannot guess which name you picked — the Worker answers to all of
-them — so put the new one in **Install & sites → Script URL** and the snippet it
+them — so put the new one in **Settings → Script URL** and the snippet it
 shows stays copy-pasteable.
 
 Pick this before step 5 if you are using Access with path bypasses.
@@ -264,7 +264,7 @@ on the dashboard. In your browser's console, on your own site:
 localStorage.setItem('em-ignore', '1')
 ```
 
-The dashboard's **Install & sites** panel has a button that copies this for you.
+The dashboard's **Settings** tab has a button that copies this for you.
 
 ## 9. Back up beyond Time Travel
 
@@ -299,7 +299,7 @@ Two more that are not `vars`:
 - `observability.head_sampling_rate` is `1`, meaning every request is logged. That
   is right for a new instance you are still watching and wasteful once traffic
   grows. Turn it down when it stops being interesting.
-- **Script URL** lives in the dashboard under **Install & sites**, not in
+- **Script URL** lives in the dashboard under **Settings**, not in
   `wrangler.jsonc`. It is a deliberate exception: the value depends on the
   hostname you ended up on, the filename you chose in step 7 and whether you did
   step 5, none of which are knowable at deploy time. It is stored in D1, so a

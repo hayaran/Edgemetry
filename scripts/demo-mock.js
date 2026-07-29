@@ -68,15 +68,16 @@
    *
    * Left to itself the console guesses its own origin, which on the demo is a
    * github.io address — an install snippet nobody could ever use. This is the
-   * same override a real operator saves under Install & sites when the tracker
-   * is served from somewhere other than the dashboard.
+   * same override a real operator saves under Settings when the tracker is
+   * served from somewhere other than the dashboard.
    */
   var TRACKER_URL = 'https://stats.edgemetry.dev/em.js';
 
   /**
    * The demo account is a viewer, not an owner. That is not decoration: the
-   * dashboard already hides the Team tab and the site/password forms for a
-   * viewer, so the read-only shape of the demo falls out of the real role check
+   * dashboard already keeps Team off the account menu and hides the add-site
+   * and remove-site controls for a viewer, so the read-only shape of the demo
+   * falls out of the real role check
    * instead of a second code path that could drift from it.
    */
   var DEMO_ROLE = 'viewer';

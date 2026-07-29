@@ -42,6 +42,9 @@
 }
 
 * { box-sizing:border-box; }
+/* Half the header is laid out with an explicit display, which beats the browser's
+   own [hidden] rule — so the header's own hiding has to say it louder. */
+[hidden] { display:none !important; }
 html, body { background:var(--paper); }
 body { margin:0; color:var(--body); font:400 14px/1.5 var(--sans); -webkit-font-smoothing:antialiased; }
 button { font:inherit; color:inherit; background:none; border:0; padding:0; cursor:pointer; }
@@ -265,6 +268,9 @@ h2.title { margin:0; font:400 24px/1.15 var(--serif); color:var(--ink); }
 .settings-row > span:first-child { display:flex; flex-direction:column; gap:3px; min-width:0; }
 .settings-row .t { font:500 13px var(--sans); color:var(--ink); }
 .settings-row .s { font:400 11.5px var(--sans); color:var(--muted); }
+/* The control half of a settings row, when it takes more than one element. */
+.settings-act { display:flex; gap:8px; align-items:center; flex:none; }
+.settings-act .field { width:230px; }
 .team-row { display:grid; grid-template-columns:minmax(0,1fr) 130px 100px 70px; gap:12px;
   align-items:center; padding:11px 12px; border-radius:11px; border:1px solid var(--line); }
 .team-row.head { border-color:transparent; padding:0 12px; }
@@ -277,14 +283,6 @@ h2.title { margin:0; font:400 24px/1.15 var(--serif); color:var(--ink); }
 .who .lines b { font:500 13px var(--sans); color:var(--ink); white-space:nowrap;
   overflow:hidden; text-overflow:ellipsis; }
 .who .lines span { font:400 11px var(--mono); color:var(--faint); }
-.site-card { display:grid; grid-template-columns:minmax(0,1fr) 120px; gap:14px; align-items:center;
-  background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:14px 15px;
-  width:100%; text-align:left; transition:transform .2s cubic-bezier(.34,1.4,.64,1), box-shadow .2s ease; }
-.site-card:hover { transform:translateY(-2px); box-shadow:0 12px 26px -16px rgba(26,25,34,.4); }
-.dashed { border:1px dashed color-mix(in srgb, var(--ink) 20%, transparent); border-radius:13px;
-  padding:14px 15px; display:flex; align-items:center; gap:10px; width:100%; text-align:left;
-  transition:border-color .18s ease, background .18s ease; }
-.dashed:hover { border-color:var(--signal); background:var(--panel-2); }
 .check { width:16px; height:16px; border-radius:5px; display:grid; place-items:center; flex:none;
   font-size:10px; color:#fff; background:var(--live); }
 .check.off { background:none; border:1.5px solid var(--track); }
@@ -315,6 +313,15 @@ h2.title { margin:0; font:400 24px/1.15 var(--serif); color:var(--ink); }
   margin-bottom:2px; border-bottom:1px solid var(--line-2); }
 .pop form { margin:0; }
 .pop button.leave { color:var(--down); }
+/* The switcher carries a domain, a 30-day count and a sparkline on one line, and
+   an input wide enough to type a hostname into below them. */
+.pop.sites { min-width:330px; }
+.pop button[aria-current="true"] { background:var(--signal-tint); }
+.pop .pop-foot { display:flex; align-items:center; gap:7px; padding:8px 6px 4px;
+  margin-top:4px; border-top:1px solid var(--line-2); }
+/* Undoes the full-width menu-row shape every other button in here wants. */
+.pop .pop-foot .btn { width:auto; flex:none; padding:7px 12px; }
+.pop .pop-foot .btn.primary:hover { background:var(--ink); }
 
 /* command palette */
 .scrim { position:fixed; inset:0; z-index:80; background:color-mix(in srgb, var(--ink) 28%, transparent);
@@ -364,6 +371,11 @@ h2.title { margin:0; font:400 24px/1.15 var(--serif); color:var(--ink); }
   .metric { flex:0 0 208px; scroll-snap-align:start; }
   .metric:hover { transform:none; }
   .team-row { grid-template-columns:minmax(0,1fr); gap:8px; }
+  /* A label and its control cannot share a line this narrow — the Script URL
+     row ends up one word per line trying. Stack them and let each have the width. */
+  .settings-row { flex-direction:column; align-items:flex-start; gap:10px; }
+  .settings-act { width:100%; }
+  .settings-act .field { width:auto; flex:1; }
   .geo-list { grid-template-columns:minmax(0,1fr); }
   /* Hit targets go to 44px on touch-sized screens. */
   .row, .pop button { min-height:44px; }
@@ -411,7 +423,7 @@ h2.title { margin:0; font:400 24px/1.15 var(--serif); color:var(--ink); }
         <button class="toggle" id="compare" aria-pressed="false">
           <span class="track"><span class="knob"></span></span>diff
         </button>
-        <span class="pill"><span class="dot"></span><b class="mono" id="online">0</b> live</span>
+        <span class="pill" id="livePill"><span class="dot"></span><b class="mono" id="online">0</b> live</span>
         <span class="anchor">
           <button class="avatar" id="accountBtn" aria-haspopup="menu" aria-expanded="false"
             title="Account" aria-label="Account">◐</button>
@@ -419,7 +431,7 @@ h2.title { margin:0; font:400 24px/1.15 var(--serif); color:var(--ink); }
       </div>
     </div>
     <nav class="head-row tabs" id="tabs" aria-label="Sections"></nav>
-    <div class="head-row strip">
+    <div class="head-row strip" id="strip">
       <span class="strip-label">where</span>
       <div id="chips" style="display:flex;gap:8px;flex-wrap:wrap"></div>
       <span class="mono" id="chipHint" style="font-size:12px;color:var(--faint)"></span>
@@ -498,7 +510,21 @@ var RANGES = [
 var PAGE_TABS = [['path', 'Top'], ['entry', 'Entry'], ['exit', 'Exit']];
 var SRC_TABS = [['referrer', 'Referrer'], ['utm_source', 'Source'], ['utm_medium', 'Medium'], ['utm_campaign', 'Campaign']];
 var TECH_TABS = [['browser', 'Browser'], ['os', 'OS'], ['device', 'Device'], ['screen', 'Screen']];
-var TABS = ['Overview', 'Pages', 'Sources', 'Geography', 'Tech', 'Events', 'Team', 'Settings'];
+/* The tab row is the site: every entry on it is a view of the numbers for the
+   one domain named in the switcher, and Settings is there because installing
+   the snippet is the one thing you configure per site. */
+var TABS = ['Overview', 'Pages', 'Sources', 'Geography', 'Tech', 'Events', 'Settings'];
+
+/* These belong to whoever is signed in, not to a site, so they hang off the
+   account menu instead. They are still routable — a deep link to ?tab=Team
+   works — they just never appear in the tab row. */
+var ACCOUNT_TABS = ['Profile', 'Team'];
+
+function isAccountTab(tab) { return ACCOUNT_TABS.indexOf(tab) !== -1; }
+
+/** Screens with no time dimension: the range, the diff toggle and the filter
+ *  strip all sit on top of numbers, and none of these show any. */
+function isConfigTab(tab) { return tab === 'Settings' || isAccountTab(tab); }
 
 /** How a dimension's values are written out, and what a filter on it reads. */
 var DIM_LABEL = {
@@ -612,7 +638,7 @@ function neededDims() {
   if (state.tab === 'Geography') return ['country'];
   if (state.tab === 'Tech') return ['browser', 'os', 'device', 'screen'];
   if (state.tab === 'Events') return ['event', 'path'];
-  if (state.tab === 'Team' || state.tab === 'Settings') return [];
+  if (isConfigTab(state.tab)) return [];
   return [state.pages, state.src, 'event', 'country', state.tech];
 }
 
@@ -1367,75 +1393,49 @@ function trackerUrlRow() {
       'different hostname than this dashboard. Leave it empty for ' +
       '<span class="mono">' + esc(defaultTrackerUrl()) + '</span>.</span>' +
       '<span class="note" id="trackerUrlNote"></span></span>' +
-    '<span style="display:flex;gap:8px;align-items:center;flex:none">' +
-      '<input class="field" id="trackerUrlInput" style="width:230px" type="url" spellcheck="false" ' +
+    '<span class="settings-act">' +
+      '<input class="field" id="trackerUrlInput" type="url" spellcheck="false" ' +
       'placeholder="' + esc(defaultTrackerUrl()) + '" value="' + esc(state.trackerUrl) + '" ' +
       'aria-label="Tracker script URL">' +
       '<button class="btn" type="submit">Save</button></span></form>';
 }
 
-function settingsScreen() {
-  var owner = state.me && state.me.role === 'owner';
-  var cards = state.sites.map(function (site) {
-    var stats = state.siteStats[site.id];
-    return '<button class="site-card" data-site="' + site.id + '">' +
-      '<span style="display:flex;flex-direction:column;gap:6px;min-width:0">' +
-        '<b style="font:500 14px var(--sans);color:var(--ink)">' + esc(site.domain) + '</b>' +
-        '<span style="display:flex;align-items:baseline;gap:9px">' +
-          '<span class="mono" style="font:600 20px/1 var(--mono);color:var(--ink)">' +
-            esc(stats ? fmt.count(stats.totals.visitors) : '…') + '</span>' +
-          '<span style="font:400 11.5px var(--sans);color:var(--faint)">visitors · 30d</span></span></span>' +
-      '<span style="height:38px">' + (stats ? sparkline(stats.series.cur.visitors, true) : '') + '</span>' +
-      '</button>';
-  }).join('');
+/**
+ * Removing the site you are looking at, the mirror of adding one in the
+ * switcher: that is where you say a domain is tracked, this is where you say it
+ * no longer is. Never offered for the last site — an instance with nothing left
+ * to show has no way back to this screen.
+ */
+function removeSiteRow() {
+  if (!state.me || state.me.role !== 'owner' || state.sites.length < 2) return '';
+  return '<div class="settings-row"><span><span class="t">Stop tracking ' + esc(state.siteDomain()) + '</span>' +
+    '<span class="s">Drops it from the switcher and stops accepting beacons for it. ' +
+    'Rollups already collected are kept.</span></span>' +
+    '<button class="btn danger" data-remove-site="' + state.site + '">Remove site</button></div>';
+}
 
-  return '<div class="grid-2">' +
-    '<section class="panel"><span class="cap">sites</span>' +
-      '<div style="display:flex;flex-direction:column;gap:10px">' + cards +
-      (owner
-        ? '<form class="dashed" id="addSite" style="cursor:auto">' +
-          '<span style="width:26px;height:26px;border-radius:8px;background:var(--signal-tint);' +
-          'color:var(--signal-ink);display:grid;place-items:center;font:500 16px var(--sans);flex:none">+</span>' +
-          '<input class="field" id="newDomain" placeholder="another-site.com" aria-label="Domain to add" ' +
-          'style="background:var(--panel);flex:1">' +
-          '<button class="btn primary" type="submit">Add</button></form>'
-        : '') +
-      '</div>' +
-      (owner && state.sites.length > 1
-        ? '<div style="display:flex;flex-wrap:wrap;gap:7px;padding-top:4px">' + state.sites.map(function (site) {
-            return '<button class="btn danger" data-remove-site="' + site.id + '">Remove ' + esc(site.domain) + '</button>';
-          }).join('') + '</div>'
-        : '') +
-    '</section>' +
+function settingsScreen() {
+  return '<div style="display:flex;flex-direction:column;gap:5px">' +
+      '<h2 class="title" style="font-size:20px">' + esc(state.siteDomain()) + '</h2>' +
+      '<p class="lede">Everything here applies to this site alone. Your password, your team and the ' +
+      'list of sites live under the account menu, top right.</p></div>' +
+    '<div class="grid-2">' +
     '<section class="panel"><span class="cap">install</span>' +
       '<p class="lede">Rename <span class="mono" style="font-size:12.5px">em.js</span> to anything you like — ' +
       'the endpoint follows the filename, which is what keeps path-based blocklists from matching every deployment. ' +
       'Tell the snippet below where you put it and it stays correct.</p>' +
       snippetBlock() +
       trackerUrlRow() +
-      '<div class="settings-row"><span><span class="t">Raw events</span>' +
-        '<span class="s">Kept until the nightly rollup, then dropped. Daily rollups are permanent.</span></span>' +
-        '<span class="mono" style="color:var(--signal)">~1 day</span></div>' +
       '<div class="settings-row"><span><span class="t">Ignore your own visits</span>' +
         '<span class="s">localStorage is per-origin, so this has to be set on your site, not here. ' +
         'Paste it into the console on ' + esc(state.siteDomain()) + ' once.</span></span>' +
         '<button class="btn" id="copyIgnore">Copy one-liner</button></div>' +
+      removeSiteRow() +
     '</section>' +
-    '<section class="panel"><span class="cap">account</span>' +
-      '<p class="lede">Signed in as <span class="mono">' + esc(state.me ? state.me.email : '') + '</span>' +
-      (owner ? ' · owner' : ' · viewer') + '.</p>' +
-      '<form id="changePassword" style="display:flex;flex-direction:column;gap:8px">' +
-        '<input class="field" id="currentPassword" type="password" placeholder="current password" ' +
-        'autocomplete="current-password" aria-label="Current password">' +
-        '<input class="field" id="nextPassword" type="password" placeholder="new password" ' +
-        'autocomplete="new-password" aria-label="New password">' +
-        '<div style="display:flex;gap:8px;align-items:center">' +
-        '<button class="btn" type="submit">Change password</button>' +
-        '<span class="note" id="accountNote"></span></div></form>' +
-      '<form method="post" action="/logout" style="padding-top:4px">' +
-      '<button class="btn" type="submit">Sign out</button></form>' +
-    '</section>' +
-    '<section class="panel"><span class="cap">privacy</span>' +
+    '<section class="panel"><span class="cap">data &amp; privacy</span>' +
+      '<div class="settings-row"><span><span class="t">Raw events</span>' +
+        '<span class="s">Kept until the nightly rollup, then dropped. Daily rollups are permanent.</span></span>' +
+        '<span class="mono" style="color:var(--signal)">~1 day</span></div>' +
       '<p class="lede">No cookies, no fingerprinting, no personal data at rest. Visitors are counted with a ' +
       'salted hash that is discarded nightly, so yesterday\'s visitor cannot be linked to today\'s. ' +
       'Country comes from Cloudflare\'s edge header; the IP address is never stored. All times are UTC.</p>' +
@@ -1443,6 +1443,45 @@ function settingsScreen() {
       'stored, that is the most this can honestly claim, and it makes visits and daily unique visitors ' +
       'the same number. Filtering by a path narrows to the visits that <em>started</em> there, because ' +
       'the rollup records where each visit began, not every page it passed through.</p>' +
+    '</section></div>';
+}
+
+/**
+ * You, rather than any one site: who you are signed in as, the password that
+ * gets you back in, and the way out. Reached from the account menu, because
+ * none of it changes when the site in the switcher does.
+ */
+function profileScreen() {
+  var owner = state.me && state.me.role === 'owner';
+  return '<div style="display:flex;flex-direction:column;gap:5px">' +
+      '<h2 class="title" style="font-size:20px">Profile</h2>' +
+      '<p class="lede">Signed in as <span class="mono">' + esc(state.me ? state.me.email : '') + '</span> · ' +
+      (owner
+        ? 'owner. Owners see every site and manage the team.'
+        : 'viewer. Viewers see the sites an owner has ticked for them, and nothing else.') +
+      '</p></div>' +
+    '<div class="grid-2">' +
+    '<section class="panel"><span class="cap">password</span>' +
+      '<p class="lede">Changing it signs out every other device that was signed in as you — ' +
+      'which is the fastest way to end a session you did not start.</p>' +
+      '<form id="changePassword" style="display:flex;flex-direction:column;gap:8px;max-width:340px">' +
+        '<input class="field" id="currentPassword" type="password" placeholder="current password" ' +
+        'autocomplete="current-password" aria-label="Current password">' +
+        '<input class="field" id="nextPassword" type="password" placeholder="new password" ' +
+        'autocomplete="new-password" aria-label="New password">' +
+        '<div style="display:flex;gap:8px;align-items:center">' +
+        '<button class="btn" type="submit">Change password</button>' +
+        '<span class="note" id="accountNote"></span></div></form>' +
+    '</section>' +
+    '<section class="panel"><span class="cap">session</span>' +
+      '<p class="lede">This instance is running <span class="mono">v' + esc(state.version || '—') + '</span>' +
+      (state.sites.length
+        ? ' and tracking ' + state.sites.length + (state.sites.length === 1 ? ' site' : ' sites') +
+          ' — the switcher in the top left is where you add or move between them.'
+        : '.') +
+      '</p>' +
+      '<form method="post" action="/logout">' +
+      '<button class="btn" type="submit">Sign out</button></form>' +
     '</section></div>';
 }
 
@@ -1530,15 +1569,20 @@ function render() {
     view.innerHTML = '<section class="panel"><div class="empty">' + esc(state.error) + '</div></section>';
     return;
   }
+  // The account screens are the ones still worth showing on an instance with no
+  // sites on it — that is exactly when you want the team, or the way out.
+  if (state.tab === 'Profile') { view.innerHTML = profileScreen(); return; }
+  if (state.tab === 'Team') { view.innerHTML = teamScreen(); return; }
+
   if (!state.sites.length) {
-    view.innerHTML = '<section class="panel"><div class="empty">No sites yet.</div></section>';
+    view.innerHTML = '<section class="panel"><div class="empty">' +
+      'No sites yet — add one from the switcher in the top left.</div></section>';
     return;
   }
 
   var hasTraffic = state.summary && (state.summary.totals.views > 0 || state.summary.totals.visitors > 0);
   var body;
-  if (state.tab === 'Team') body = teamScreen();
-  else if (state.tab === 'Settings') body = settingsScreen();
+  if (state.tab === 'Settings') body = settingsScreen();
   else if (!hasTraffic && !state.loading && !state.filters.length) body = firstRun();
   else if (state.tab === 'Pages') body = pagesScreen();
   else if (state.tab === 'Sources') body = sourcesScreen();
@@ -1562,9 +1606,16 @@ function renderHeader() {
 
   $('compare').setAttribute('aria-pressed', String(state.compare));
 
-  $('tabs').innerHTML = TABS.filter(function (tab) {
-    return tab !== 'Team' || (state.me && state.me.role === 'owner');
-  }).map(function (tab) {
+  // Nothing on a config screen is a number over a window, so the controls that
+  // choose that window come off rather than sit there doing nothing. The tab row
+  // stays — it is the way back — with no tab marked current on an account screen.
+  var config = isConfigTab(state.tab);
+  $('ranges').hidden = config;
+  $('compare').hidden = config;
+  $('livePill').hidden = config;
+  $('strip').hidden = config;
+
+  $('tabs').innerHTML = TABS.map(function (tab) {
     return '<button class="tab" data-tab="' + tab + '"' +
       (state.tab === tab ? ' aria-current="page"' : '') + '>' + esc(tab) + '</button>';
   }).join('') + '<span class="edge-note" id="edgeNote"></span>';
@@ -1638,7 +1689,13 @@ document.addEventListener('click', function (event) {
   if (rangeBtn) { state.range = rangeBtn.dataset.range; return refresh(); }
 
   var tabBtn = target.closest('[data-tab]');
-  if (tabBtn) { state.tab = tabBtn.dataset.tab; closePop(); return afterTab(); }
+  if (tabBtn) {
+    state.tab = tabBtn.dataset.tab;
+    // Both menus can hold one of these, and neither closes on a click inside it.
+    closePop();
+    closeAccount();
+    return afterTab();
+  }
 
   var metricBtn = target.closest('[data-metric]');
   if (metricBtn) { state.metric = metricBtn.dataset.metric; pushUrl(); return render(); }
@@ -1678,8 +1735,10 @@ $('searchBtn').addEventListener('click', openPalette);
 function afterTab() {
   pushUrl();
   render();
-  if (state.tab === 'Team' && !state.users) return loadUsers();
-  if (state.tab === 'Settings') return loadSiteStats();
+  if (state.tab === 'Team') return state.users ? Promise.resolve() : loadUsers();
+  // Nothing on Profile is fetched, and Settings reads only what /api/me already
+  // handed over — neither is worth a round of queries against the rollups.
+  if (state.tab === 'Profile' || state.tab === 'Settings') return Promise.resolve();
   return refresh();
 }
 
@@ -1697,27 +1756,57 @@ function paintPop() {
   var host = $('sitePop');
   if (!host) return;
 
+  // A repaint lands whenever the per-site numbers do, which can be mid-sentence
+  // for someone typing a domain into the row below. Carry the text across.
+  var pending = $('newDomain') ? $('newDomain').value : '';
+
   host.innerHTML = state.sites.map(function (site) {
     var stats = state.siteStats[site.id];
-    return '<button data-site="' + site.id + '">' +
+    return '<button data-site="' + site.id + '"' +
+      (site.id === state.site ? ' aria-current="true"' : '') + '>' +
       '<span style="display:flex;flex-direction:column;gap:2px;min-width:0">' +
       '<span class="mono" style="font-size:13px;color:var(--ink)">' + esc(site.domain) + '</span>' +
       '<span class="mono" style="font-size:11px;color:var(--faint)">' +
       esc(stats ? fmt.count(stats.totals.visitors) + ' visitors · 30d' : 'loading…') + '</span></span>' +
       '<span style="width:78px;flex:none">' +
       (stats ? sparkline(stats.series.cur.visitors, site.id === state.site) : '') + '</span></button>';
-  }).join('');
+  }).join('') +
+  // Adding a site is switching to a site you do not have yet, so it belongs on
+  // the same menu rather than on a settings page you would have to go find.
+  (state.me && state.me.role === 'owner'
+    ? '<form id="addSite" class="pop-foot">' +
+      '<input class="field" id="newDomain" placeholder="another-site.com" aria-label="Domain to add" ' +
+      'value="' + esc(pending) + '" spellcheck="false" style="flex:1;padding:7px 10px">' +
+      '<button class="btn primary" type="submit" style="flex:none">Add</button></form>'
+    : '');
 }
 
 function openPop() {
-  if (state.sites.length < 2) return;
+  // A viewer on a single site has nothing to switch to and nothing to add, so
+  // the switcher stays a label rather than opening on a menu of one.
+  var owner = state.me && state.me.role === 'owner';
+  if (!owner && state.sites.length < 2) return;
   popOpen = true;
   $('siteBtn').setAttribute('aria-expanded', 'true');
 
   var host = document.createElement('div');
-  host.className = 'pop';
+  host.className = 'pop sites';
   host.id = 'sitePop';
   $('siteBtn').parentNode.appendChild(host);
+
+  // The switcher hangs off a button that sits a third of the way across the
+  // header, so on a phone a menu wide enough for a domain and a sparkline runs
+  // off the right edge. There it becomes a sheet in the page gutters instead,
+  // measured off the button rather than guessed at — the header is two rows on
+  // some widths and three on others.
+  if (innerWidth <= 1023) {
+    var box = $('siteBtn').getBoundingClientRect();
+    host.style.position = 'fixed';
+    host.style.top = Math.round(box.bottom + 8) + 'px';
+    host.style.left = '14px';
+    host.style.right = '14px';
+    host.style.minWidth = '0';
+  }
   paintPop();
 
   // Repaint once the numbers land. This must not reopen the popover: when the
@@ -1790,6 +1879,16 @@ function openAccount() {
       (state.me && state.me.role === 'owner' ? 'owner' : 'viewer') +
       (state.version ? ' · v' + esc(state.version) : '') + '</span></div>' +
     updateItem() +
+    '<button data-tab="Profile" role="menuitem">' +
+      '<span style="font:500 13px var(--sans);color:var(--ink)">Profile</span>' +
+      '<span class="mono" style="font-size:11.5px;color:var(--muted)">password</span></button>' +
+    (state.me && state.me.role === 'owner'
+      ? '<button data-tab="Team" role="menuitem">' +
+        '<span style="font:500 13px var(--sans);color:var(--ink)">Team</span>' +
+        '<span class="mono" style="font-size:11.5px;color:var(--muted)">' +
+        (state.users ? state.users.length + (state.users.length === 1 ? ' person' : ' people') : 'access') +
+        '</span></button>'
+      : '') +
     '<button id="themeItem" role="menuitem" aria-label="Switch theme">' +
       '<span style="font:500 13px var(--sans);color:var(--ink)">Theme</span>' +
       '<span class="mono" id="themeValue" style="font-size:11.5px;color:var(--muted)">' +
@@ -1825,7 +1924,8 @@ document.addEventListener('click', function (event) {
   }
 });
 
-/** Per-site headline numbers for the switcher and the sites screen. */
+/** Per-site headline numbers for the switcher. Only the switcher shows these,
+ *  so they are fetched the first time it opens rather than on load. */
 function loadSiteStats() {
   var pending = state.sites.filter(function (site) { return !state.siteStats[site.id]; });
   if (!pending.length) return Promise.resolve();
@@ -1834,9 +1934,7 @@ function loadSiteStats() {
     return get('/api/summary?range=30d&site=' + site.id).then(function (data) {
       state.siteStats[site.id] = data;
     }).catch(function () {});
-  })).then(function () {
-    if (state.tab === 'Settings') render();
-  });
+  }));
 }
 
 /* command palette -------------------------------------------------------- */
@@ -1847,8 +1945,14 @@ function paletteSource() {
   var items = [];
 
   TABS.forEach(function (tab) {
-    if (tab === 'Team' && (!state.me || state.me.role !== 'owner')) return;
     items.push({ kind: 'go', text: tab, meta: 'navigate', run: function () { state.tab = tab; afterTab(); } });
+  });
+
+  // The account screens are off the tab row, which makes the palette the only
+  // way to reach them without going through the menu.
+  ACCOUNT_TABS.forEach(function (tab) {
+    if (tab === 'Team' && (!state.me || state.me.role !== 'owner')) return;
+    items.push({ kind: 'go', text: tab, meta: 'account', run: function () { state.tab = tab; afterTab(); } });
   });
 
   state.sites.forEach(function (site) {
@@ -2032,8 +2136,13 @@ document.addEventListener('submit', function (event) {
       if (data.error) return toast(data.error);
       state.sites = data.sites;
       state.siteStats = {};
+      $('newDomain').value = '';
       render();
-      loadSiteStats();
+      // The switcher this was typed into is still open, and the new domain has
+      // to appear in it — with a sparkline once the numbers for it land.
+      paintPop();
+      toast(domain + ' added');
+      return loadSiteStats().then(paintPop);
     });
   }
 
@@ -2092,8 +2201,14 @@ document.addEventListener('click', function (event) {
     return post('/api/sites/' + id, null, 'DELETE').then(function (data) {
       if (data.error) return toast(data.error);
       state.sites = data.sites;
+      delete state.siteStats[id];
+      toast(site.domain + ' removed');
+      // Removing the site you were looking at moves you to another one, and
+      // every number on screen was about the one that just went away.
       if (!state.sites.some(function (s) { return s.id === state.site; })) {
         state.site = state.sites.length ? state.sites[0].id : null;
+        state.filters = [];
+        return refresh().then(loadRealtime);
       }
       render();
     });
@@ -2189,7 +2304,6 @@ Promise.all([get('/api/me'), get('/api/sites')])
     // A deep link can land on any tab, so the data that tab needs has to be
     // asked for here too, not only when someone clicks across to it.
     if (state.tab === 'Team') loadUsers();
-    if (state.tab === 'Settings') loadSiteStats();
     return Promise.all([refresh(), loadRealtime()]);
   })
   .then(function () {
