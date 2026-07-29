@@ -415,7 +415,9 @@ h2.title { margin:0; font:400 24px/1.15 var(--serif); color:var(--ink); }
 <div class="toast" id="toast" role="status"></div>
 <div id="paletteHost"></div>
 
-<script>
+<!-- The nonce is filled in per request so the content policy can allow this one
+     block by name instead of allowing inline script in general. -->
+<script nonce="{{nonce}}">
 (function () {
 'use strict';
 
