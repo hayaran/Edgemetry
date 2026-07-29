@@ -1,0 +1,82 @@
+name: Append update instructions to a release
+
+# The console's update banner links to the release it found. Someone arriving
+# there has just been told they are two releases behind and is looking for what
+# to do about it — and generated notes tell them what changed, which is not the
+# same question.
+#
+# The instance cannot answer it either: a deployed Worker has no idea which
+# repository it was built from, so it cannot link anyone to their own Actions
+# tab. The instructions have to be waiting where the banner sends people, and
+# nobody should have to remember to paste them.
+#
+# Runs when a release is published. `workflow_dispatch` takes a tag so an
+# existing release can be backfilled.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to append to (e.g. v0.2.1)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  append:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Append the how-to-update section
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          body=$(gh release view "$TAG" --json body --jq '.body')
+
+          # `release: published` fires once, but a dispatch can be run twice by
+          # hand and editing a release must not stack a second copy.
+          if printf '%s' "$body" | grep -q '<!-- how-to-update -->'; then
+            echo "Already carries the section — nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          section=$(printf '%s\n' \
+            '' \
+            '<!-- how-to-update -->' \
+            '## Updating to this release' \
+            '' \
+            'Your Edgemetry is its own repository — the deploy button imported this one' \
+            'rather than forking it, so GitHub gives you no **Sync fork** button.' \
+            '' \
+            'In your copy: **Actions → Update Edgemetry → Run workflow**, then merge the' \
+            'pull request it opens. Merging is what deploys. Your data and your Cloudflare' \
+            'configuration are untouched — they live in D1 and in Cloudflare, not in the' \
+            'repository.' \
+            '' \
+            'No such workflow? Your copy predates it, and needs one manual update to get' \
+            'it. From a clone of your repository:' \
+            '' \
+            '```bash' \
+            'git remote add upstream https://github.com/hayaran/Edgemetry.git' \
+            'git fetch upstream main' \
+            'git reset --hard upstream/main' \
+            'git reset --soft origin/main' \
+            'git commit -m "Update Edgemetry"' \
+            'git push' \
+            '```' \
+            '' \
+            'That takes upstream'"'"'s files as one ordinary commit on your own history, which' \
+            'is what makes it apply cleanly to a repository that shares no history with' \
+            'this one. It replaces every tracked file, so read the diff first if you have' \
+            'edited any.' \
+            '' \
+            '[Full detail in the README](https://github.com/hayaran/Edgemetry#taking-the-update)')
+
+          printf '%s\n%s\n' "$body" "$section" | gh release edit "$TAG" --notes-file -
+          echo "Appended the how-to-update section to $TAG." >> "$GITHUB_STEP_SUMMARY"
