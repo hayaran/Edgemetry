@@ -1765,7 +1765,8 @@ function updateItem() {
     'target="_blank" rel="noreferrer noopener">' +
     '<span style="font:500 13px var(--sans);color:var(--ink)">Update available</span>' +
     '<span class="mono" style="font-size:11.5px;color:var(--signal)">' +
-    info.behind + (info.behind === 1 ? ' release' : ' releases') + ' behind</span></a>';
+    info.behind + (info.atLeast ? '+' : '') +
+    (info.behind === 1 && !info.atLeast ? ' release' : ' releases') + ' behind</span></a>';
 }
 
 function openAccount() {
