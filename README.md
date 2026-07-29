@@ -11,7 +11,7 @@ site deserves.
 dashboard, running on made-up traffic. No sign-in, nothing to install. Click a
 row and watch every panel narrow.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/nitinhayaran/Edgemetry)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/hayaran/Edgemetry)
 
 
 ## What you get
@@ -50,18 +50,9 @@ Open your new Worker URL. The first visit shows a short setup form: your email, 
 password, and the domain you want to track. That is the entire configuration step
 — the database schema creates itself on first request.
 
-**Complete this before sharing the URL with anyone.** Until the first account
-exists, `/setup` is open to whoever reaches it, and that first account becomes
-the permanent owner — so an untended `*.workers.dev` link is a race you can lose
-to a stranger, not just to yourself. The claim is atomic, which only means two
-submissions landing at the same instant can't both win; it does nothing to stop
-someone from simply getting there first.
-
-Once the account exists the exposure changes shape rather than going away:
-`/login` will accept guesses as fast as anyone cares to send them, and nothing
-in the Worker slows that down. Fixing it is a step you have to take yourself —
-see [Required: rate-limit the login
-endpoint](#required-rate-limit-the-login-endpoint).
+**Do this before the URL exists anywhere but your address bar.** Until the first
+account exists, `/setup` is open to whoever reaches it, and that account becomes
+the permanent owner. Until you have claimed it, treat the URL as a secret.
 
 ### 3. Add the snippet
 
@@ -82,88 +73,16 @@ npm install && npx wrangler deploy
 
 Wrangler provisions the D1 database on first deploy, the same as the button does.
 
-## Recommended: put it on your own domain
+## Before you rely on it
 
-The default `*.workers.dev` URL works, but pointing a subdomain of your own site
-at the Worker (for example `stats.example.com`) is what defeats ad blockers,
-because blocklists work primarily on hostnames. In the Cloudflare dashboard, open
-the Worker → **Settings** → **Domains & Routes** → **Add custom domain**.
+A deployed Worker is not yet a safe one. Three things in particular are on you,
+not on the deploy button: claiming the instance, moving it off `*.workers.dev`
+onto a domain you control, and putting a rate limit in front of `/login`, which
+has no throttle of its own.
 
-For path-based blocklist rules, rename the script: the endpoint is derived from
-whatever filename you request. Ask for `/xyz.js` and the script posts its beacons
-to `/xyz`. No server-side configuration is involved, so every deployment can use
-a different path and no single blocklist entry matches them all.
-
-Ad blockers are the obvious reason to do this, but not the only one. A custom
-domain is also what makes the login rate limit in the next section possible at
-all.
-
-## Required: rate-limit the login endpoint
-
-`POST /login` has no throttle of its own. There is no lockout, no backoff and no
-429 — ten wrong passwords in a row cost an attacker about as much time as one
-correct one. That is a design position rather than an oversight: per-IP counters
-would be per-request state the Worker does not otherwise keep, and the password
-hash is deliberately cheap on top of it (see `PBKDF2_ITERATIONS` under
-[Configuration](#configuration)). The throttle is meant to sit in front of the
-Worker, at Cloudflare's edge, where it costs nothing and burns none of your
-10 ms of CPU.
-
-Add the rule once, when you deploy:
-
-1. In the Cloudflare dashboard, select the **zone** your Worker runs on and open
-   **Security rules**. On accounts still on the older navigation this is
-   **Security** → **WAF** → **Rate limiting rules**.
-2. **Create rule** → **Rate limiting rules**. Name it something you will
-   recognise later, like `login-throttle`.
-3. Match **URI Path** *equals* `/login`.
-4. Under **With the same characteristics**, count by **IP**.
-5. Set the rate to **5 requests** per **10 seconds**.
-6. Action **Block**, duration **10 seconds**.
-
-### It needs a zone, and `*.workers.dev` is not one
-
-Rate limiting rules are a zone-level feature: you attach them to a domain that
-sits in your own Cloudflare account, and the dashboard page they live on is a
-page *of that zone*. `*.workers.dev` belongs to Cloudflare, not to you. It never
-appears in your zone list, so there is nowhere to hang the rule — **a Worker
-still on its `*.workers.dev` URL cannot be rate limited at all.**
-
-That turns the custom domain above from a recommendation into a prerequisite. If
-you have not set one up yet, be clear-eyed about where that leaves you: `/login`
-is reachable by anyone who knows the URL and will answer an unbounded guessing
-loop at whatever rate the network allows. The password is the only control you
-have, so make it long and random, and move the Worker onto your own hostname
-before you leave it running unattended.
-
-### What the free plan actually gives you
-
-The Free plan includes exactly **one** rate limiting rule, and it is a blunt
-instrument. The rule expression can test only **Path** (and Verified Bot), the
-counter can be keyed only on **IP**, and both the counting period and the block
-duration are fixed at **10 seconds**. That is why the rule above is written the
-way it is rather than the way you would write it if you had the choice.
-
-Two consequences worth knowing. `Request Method` is not a field you can match on
-below Business, so the rule catches the `GET /login` that renders the form as
-well as the `POST` that submits it — which is why the limit is 5 rather than 1,
-since a person reloading the page should not lock themselves out. And ten
-seconds is a very short memory: the rule caps a single IP at roughly five
-attempts per ten seconds and says nothing at all about a distributed attempt.
-Treat it as taking away the cheap unbounded burst, not as a lockout. A password
-worth the name is still doing most of the work.
-
-Paid plans sharpen it:
-
-| Plan | What it adds |
-|---|---|
-| **Pro** | 2 rules, and counting periods up to 1 minute |
-| **Business** | 5 rules; `Request Method` becomes matchable, so the rule can target `POST` alone; periods up to 10 minutes; and custom counting expressions, which let the counter advance only on the attempts that came back `401`/`403` rather than on every request |
-
-On Business the rule Cloudflare itself recommends for a login endpoint is **URI
-Path equals `/login` and Request Method equals `POST`, counted by IP, 5 requests
-per 10 minutes, action Block**. That is the rule you actually want, and it is
-worth knowing it exists even if you never leave the free tier.
+**→ [POST-DEPLOY.md](POST-DEPLOY.md)** is the checklist, with each step marked
+required, recommended or optional. It also covers what to do when you lose the
+only owner password, since there is no reset flow.
 
 ## Sites and team access
 
@@ -356,7 +275,7 @@ Set in `wrangler.jsonc` under `vars`:
 |---|---|---|
 | `HOURLY_RETENTION_DAYS` | `7` | How long hour-resolution data is kept. Daily rollups are kept forever regardless. |
 | `FILTERS` | `on` | Writes `stats_cube`, which is what makes the filter chips work. Set to `off` to trade filtering for a smaller write budget — see [What filtering costs](#what-filtering-costs). |
-| `PBKDF2_ITERATIONS` | `15000` | **A CPU budget concession, not a secure default.** OWASP's figure for PBKDF2-HMAC-SHA256 is 600,000; this is 15,000, because the Workers **free** plan allows 10 ms of CPU per request and a derivation anywhere near six figures exceeds it and locks you out of your own dashboard. What compensates for the gap is the edge rate limit — see [Required: rate-limit the login endpoint](#required-rate-limit-the-login-endpoint), which is not optional at this iteration count. On Workers Paid, raise it: `200000` is a reasonable target. Set it **before you create the first account** — the iteration count is not stored alongside the hash, so changing it invalidates every existing password. If you have already changed it and can no longer log in, put the old value back and your password works again. |
+| `PBKDF2_ITERATIONS` | `15000` | **A CPU budget concession, not a secure default.** OWASP's figure for PBKDF2-HMAC-SHA256 is 600,000; this is 15,000 because the Workers **free** plan allows 10 ms of CPU per request. The edge rate limit is what compensates. Raising it has a sharp edge — see [POST-DEPLOY.md](POST-DEPLOY.md#13-tune-the-configuration-vars). |
 
 ## Testing it
 
@@ -528,18 +447,9 @@ CI redeploys. Worth saying plainly in your release notes.
 
 ### One footgun worth knowing
 
-On your first `wrangler deploy`, Wrangler creates the D1 database and **writes
-the new `database_id` back into `wrangler.jsonc`**. Do not commit that line to a
-public template: anyone deploying your repo afterwards would get a config
-pointing at an id that does not exist in their account, and automatic
-provisioning would not kick in because the field is no longer empty.
-
-Revert it after deploying and everything keeps working — Cloudflare keeps the
-Worker linked to the database it already created:
-
-```bash
-git checkout wrangler.jsonc
-```
+On your first `wrangler deploy`, Wrangler writes the new `database_id` back into
+`wrangler.jsonc`. Do not commit that line to a public fork — see
+[POST-DEPLOY.md](POST-DEPLOY.md#7-keep-database_id-out-of-a-public-fork).
 
 ## Known limitations
 
@@ -579,8 +489,7 @@ Being upfront about these:
   429 — ten failed passwords take about as long as one, and the password hash is
   intentionally cheap on top of that. Mitigating it is the operator's job and it
   belongs at the edge, which also means it cannot be done at all while the Worker
-  is on `*.workers.dev`. See [Required: rate-limit the login
-  endpoint](#required-rate-limit-the-login-endpoint).
+  is on `*.workers.dev`. See [POST-DEPLOY.md](POST-DEPLOY.md#4-rate-limit-the-login-endpoint).
 - **The ingest endpoint is public**, as it must be. Someone who finds it could
   send junk events and burn through your daily quota — the same exposure every
   analytics tool has. Known bots are dropped before any write, but if you expect

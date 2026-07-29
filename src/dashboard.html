@@ -498,7 +498,7 @@ function displayValue(dim, value) {
 /* ============================================================== state === */
 
 var state = {
-  me: null, sites: [], site: null,
+  me: null, trackerUrl: '', sites: [], site: null,
   range: '30d', metric: 'visitors', compare: true, tab: 'Overview',
   filters: [],
   pages: 'path', src: 'referrer', tech: 'device',
@@ -1262,7 +1262,10 @@ function checklist(text, done) {
 }
 
 function snippetBlock() {
-  var snippet = '<script defer src="' + location.origin + '/em.js" data-domain="' + state.siteDomain() + '"><\/script>';
+  // The dashboard's own origin is only the right guess while the tracker is
+  // still served from it under its original name. TRACKER_URL overrides it.
+  var src = state.trackerUrl || (location.origin + '/em.js');
+  var snippet = '<script defer src="' + src + '" data-domain="' + state.siteDomain() + '"><\/script>';
   return '<div class="code" style="width:100%;max-width:520px"><span id="snippet">' + esc(snippet) + '</span>' +
     '<div class="actions"><button id="copySnippet">Copy snippet</button></div></div>';
 }
@@ -1302,7 +1305,9 @@ function settingsScreen() {
     '</section>' +
     '<section class="panel"><span class="cap">install</span>' +
       '<p class="lede">Rename <span class="mono" style="font-size:12.5px">em.js</span> to anything you like — ' +
-      'the endpoint follows the filename, which is what keeps path-based blocklists from matching every deployment.</p>' +
+      'the endpoint follows the filename, which is what keeps path-based blocklists from matching every deployment. ' +
+      'Set <span class="mono" style="font-size:12.5px">TRACKER_URL</span> once you do, or once the tracker lives on ' +
+      'a different hostname than this dashboard, so the snippet above stays correct.</p>' +
       snippetBlock() +
       '<div class="settings-row"><span><span class="t">Raw events</span>' +
         '<span class="s">Kept until the nightly rollup, then dropped. Daily rollups are permanent.</span></span>' +
@@ -1960,6 +1965,7 @@ readUrl();
 Promise.all([get('/api/me'), get('/api/sites')])
   .then(function (results) {
     state.me = results[0].user;
+    state.trackerUrl = results[0].trackerUrl || '';
     state.sites = results[1].sites;
     if (!state.sites.some(function (s) { return s.id === state.site; })) {
       state.site = state.sites.length ? state.sites[0].id : null;
