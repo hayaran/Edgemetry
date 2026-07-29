@@ -1,5 +1,7 @@
-import { env } from 'cloudflare:test';
+import { SELF, env } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
+
+import { FAVICON_SVG } from '../src/favicon';
 
 import {
   RAW_COLUMNS,
@@ -761,6 +763,34 @@ describe('tracker url override', () => {
     expect(normalizeTrackerUrl('t.example.com/em.js')).toBeNull();
     expect(normalizeTrackerUrl('/em.js')).toBeNull();
     expect(normalizeTrackerUrl('javascript:alert(1)//em.js')).toBeNull();
+  });
+});
+
+describe('the signed-out surfaces every deployment exposes', () => {
+  // These three are the only paths that answer without a session, and all three
+  // sit next to a catch-all that claims `/:name` for the ingest endpoint. A
+  // reserved-path list that lost an entry would hand crawlers and browsers a 404
+  // or, worse, route their GET into the tracker — hence a real fetch each.
+  it('tells crawlers to stay out of the whole instance', async () => {
+    const response = await SELF.fetch('https://analytics.example.com/robots.txt');
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('User-agent: *\nDisallow: /\n');
+  });
+
+  it.each(['/favicon.svg', '/favicon.ico'])('serves the mark at %s', async (path) => {
+    const response = await SELF.fetch(`https://analytics.example.com${path}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('image/svg+xml');
+    expect(await response.text()).toBe(FAVICON_SVG);
+  });
+
+  it('keeps the icon paths out of the ingest endpoint', async () => {
+    // `POST /:name` is the beacon endpoint for whatever filename the deployment
+    // chose for its tracker. Both icon names must fall through to a 404 instead.
+    for (const path of ['/favicon.svg', '/favicon.ico']) {
+      const response = await SELF.fetch(`https://analytics.example.com${path}`, { method: 'POST' });
+      expect(response.status).toBe(404);
+    }
   });
 });
 

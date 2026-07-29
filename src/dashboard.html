@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>Edgemetry</title>
 <style>
 /*fonts*/
@@ -110,9 +111,11 @@ input { font:inherit; color:inherit; }
 .pill { display:flex; align-items:center; gap:7px; padding:7px 11px; border-radius:9px;
   background:var(--live-tint); color:var(--up); font:500 12px var(--mono); flex:none; }
 .pill .dot { background:var(--live); color:var(--live); animation:em-live 1.8s ease-out infinite; }
-.avatar { width:28px; height:28px; border-radius:8px; display:grid; place-items:center; flex:none;
+.avatar { width:28px; height:28px; border-radius:99px; display:grid; place-items:center; flex:none;
   background:color-mix(in srgb, var(--live) 16%, transparent); color:var(--live);
-  font:600 11px var(--mono); }
+  font:600 11px var(--mono); transition:box-shadow .18s ease; }
+.avatar:hover, .avatar[aria-expanded="true"] {
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--live) 20%, transparent); }
 
 .tab { padding:12px 14px; font:500 13px var(--sans); color:var(--muted); white-space:nowrap;
   border-bottom:2px solid transparent; transition:color .2s ease, border-color .2s ease; }
@@ -300,6 +303,13 @@ h2.title { margin:0; font:400 24px/1.15 var(--serif); color:var(--ink); }
   padding:9px 10px; border-radius:9px; text-align:left; transition:background .16s ease; }
 .pop button:hover, .pop button[aria-selected="true"] { background:var(--hover); }
 .anchor { position:relative; }
+/* The site switcher hangs off the left of the header; the account menu hangs off
+   the right, where a left-aligned popover would run off the edge of the page. */
+.pop.right { left:auto; right:0; min-width:224px; }
+.pop .pop-head { display:flex; flex-direction:column; gap:2px; padding:8px 10px 9px;
+  margin-bottom:2px; border-bottom:1px solid var(--line-2); }
+.pop form { margin:0; }
+.pop button.leave { color:var(--down); }
 
 /* command palette */
 .scrim { position:fixed; inset:0; z-index:80; background:color-mix(in srgb, var(--ink) 28%, transparent);
@@ -397,7 +407,10 @@ h2.title { margin:0; font:400 24px/1.15 var(--serif); color:var(--ink); }
           <span class="track"><span class="knob"></span></span>diff
         </button>
         <span class="pill"><span class="dot"></span><b class="mono" id="online">0</b> live</span>
-        <button class="avatar" id="themeBtn" title="Switch theme" aria-label="Switch theme">◐</button>
+        <span class="anchor">
+          <button class="avatar" id="accountBtn" aria-haspopup="menu" aria-expanded="false"
+            title="Account" aria-label="Account">◐</button>
+        </span>
       </div>
     </div>
     <nav class="head-row tabs" id="tabs" aria-label="Sections"></nav>
@@ -598,19 +611,80 @@ function neededDims() {
   return [state.pages, state.src, 'event', 'country', state.tech];
 }
 
+/**
+ * Everything fetched is cached against the query that produced it. Tabs and
+ * panel tabs only change which slice of the same window is on screen, so
+ * moving between them must not re-run the queries behind it: the summary never
+ * depends on the tab at all, and a ranking already on hand is still the same
+ * ranking. Only a new range, site or filter stack makes the numbers different.
+ */
+var dataKey = null;      // the apiQuery() the cache below belongs to
+var freshDims = {};      // dim -> its rows are current for dataKey
+var freshSummary = false;
+var dimRequest = {};     // dim -> the in-flight request that will fill it
+var summaryRequest = null;
+
 function load() {
   if (!state.site) return Promise.resolve();
+  var key = apiQuery().toString();
+
+  if (key !== dataKey) {
+    // The old rows stay on screen until their replacements land — clearing
+    // them here would blank every panel for the length of a round trip.
+    dataKey = key;
+    freshDims = {};
+    freshSummary = false;
+    dimRequest = {};
+    summaryRequest = null;
+  }
+
+  var calls = [];
+
+  if (!freshSummary && !summaryRequest) {
+    var summaryCall = get('/api/summary?' + key).then(function (data) {
+      // A reply for a window the user has already moved off must not overwrite
+      // the one they are looking at now.
+      if (key !== dataKey) return;
+      state.summary = data;
+      freshSummary = true;
+    }).finally(function () {
+      if (summaryRequest === summaryCall) summaryRequest = null;
+    });
+    summaryRequest = summaryCall;
+  }
+  if (summaryRequest) calls.push(summaryRequest);
+
   var dims = neededDims();
-  var base = apiQuery().toString();
+  var missing = dims.filter(function (dim) {
+    return !freshDims[dim] && !dimRequest[dim];
+  });
 
-  var calls = [get('/api/summary?' + base)];
-  calls.push(dims.length
-    ? get('/api/breakdown?' + base + '&limit=40&dim=' + dims.join(','))
-    : Promise.resolve({ breakdowns: {} }));
+  if (missing.length) {
+    var dimCall = get('/api/breakdown?' + key + '&limit=40&dim=' + missing.join(',')).then(function (data) {
+      if (key !== dataKey) return;
+      var rows = data.breakdowns || {};
+      missing.forEach(function (dim) {
+        state.breakdowns[dim] = rows[dim] || [];
+        freshDims[dim] = true;
+      });
+    }).finally(function () {
+      missing.forEach(function (dim) {
+        if (dimRequest[dim] === dimCall) delete dimRequest[dim];
+      });
+    });
+    missing.forEach(function (dim) { dimRequest[dim] = dimCall; });
+    calls.push(dimCall);
+  }
 
-  return Promise.all(calls).then(function (results) {
-    state.summary = results[0];
-    state.breakdowns = results[1].breakdowns || {};
+  // A dim this tab needs can already be on its way from the tab before it;
+  // wait on that request rather than asking for the same rows twice.
+  dims.forEach(function (dim) {
+    if (dimRequest[dim] && calls.indexOf(dimRequest[dim]) < 0) calls.push(dimRequest[dim]);
+  });
+
+  if (!calls.length) return Promise.resolve();
+
+  return Promise.all(calls).then(function () {
     state.error = null;
   }).catch(function (err) {
     state.error = err.message;
@@ -1596,13 +1670,6 @@ $('reset').addEventListener('click', function () { state.filters = []; refresh()
 $('compare').addEventListener('click', function () { state.compare = !state.compare; refresh(); });
 $('searchBtn').addEventListener('click', openPalette);
 
-$('themeBtn').addEventListener('click', function () {
-  var next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = next;
-  try { localStorage.setItem('em-theme', next); } catch (e) {}
-  render();
-});
-
 function afterTab() {
   pushUrl();
   render();
@@ -1664,6 +1731,73 @@ function closePop() {
 
 document.addEventListener('click', function (event) {
   if (popOpen && !event.target.closest('#sitePop') && !event.target.closest('#siteBtn')) closePop();
+});
+
+/* account menu ----------------------------------------------------------- */
+
+var accountOpen = false;
+
+$('accountBtn').addEventListener('click', function (event) {
+  event.stopPropagation();
+  accountOpen ? closeAccount() : openAccount();
+});
+
+function themeName() {
+  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+}
+
+function openAccount() {
+  accountOpen = true;
+  $('accountBtn').setAttribute('aria-expanded', 'true');
+
+  var host = document.createElement('div');
+  host.className = 'pop right';
+  host.id = 'accountPop';
+  host.setAttribute('role', 'menu');
+
+  // Sign out stays a plain form post rather than a fetch. The server answers it
+  // with a redirect to /login, which a form follows on its own and a fetch would
+  // have to be told about — and it is the one action here that still works with
+  // the console's own script broken.
+  host.innerHTML =
+    '<div class="pop-head">' +
+      '<span class="mono" style="font-size:12.5px;color:var(--ink);overflow-wrap:anywhere">' +
+      esc(state.me ? state.me.email : '') + '</span>' +
+      '<span class="mono" style="font-size:11px;color:var(--faint)">' +
+      (state.me && state.me.role === 'owner' ? 'owner' : 'viewer') + '</span></div>' +
+    '<button id="themeItem" role="menuitem" aria-label="Switch theme">' +
+      '<span style="font:500 13px var(--sans);color:var(--ink)">Theme</span>' +
+      '<span class="mono" id="themeValue" style="font-size:11.5px;color:var(--muted)">' +
+      themeName() + '</span></button>' +
+    '<form method="post" action="/logout">' +
+      '<button class="leave" type="submit" role="menuitem">' +
+      '<span style="font:500 13px var(--sans)">Sign out</span></button></form>';
+
+  $('accountBtn').parentNode.appendChild(host);
+
+  $('themeItem').addEventListener('click', function (event) {
+    event.stopPropagation();
+    var next = themeName() === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('em-theme', next); } catch (e) {}
+    // render() repaints the charts against the new tokens; it rebuilds <main>
+    // only, so this popover — which lives in the header — survives it open.
+    render();
+    $('themeValue').textContent = next;
+  });
+}
+
+function closeAccount() {
+  accountOpen = false;
+  $('accountBtn').setAttribute('aria-expanded', 'false');
+  var host = $('accountPop');
+  if (host) host.remove();
+}
+
+document.addEventListener('click', function (event) {
+  if (accountOpen && !event.target.closest('#accountPop') && !event.target.closest('#accountBtn')) {
+    closeAccount();
+  }
 });
 
 /** Per-site headline numbers for the switcher and the sites screen. */
@@ -1816,6 +1950,14 @@ document.addEventListener('keydown', function (event) {
     event.preventDefault();
     return openPalette();
   }
+  // Escape closes whichever popover is open before the palette gets a look at
+  // it, so a menu opened from the header can be dismissed from the keyboard by
+  // whoever opened it that way.
+  if (event.key === 'Escape' && !palette.open) {
+    if (accountOpen) { event.preventDefault(); closeAccount(); return $('accountBtn').focus(); }
+    if (popOpen) { event.preventDefault(); closePop(); return $('siteBtn').focus(); }
+  }
+
   if (!palette.open) return;
 
   if (event.key === 'Escape') { event.preventDefault(); return closePalette(); }
@@ -2011,9 +2153,10 @@ Promise.all([get('/api/me'), get('/api/sites')])
       $('ignoreSelf') && $('ignoreSelf').setAttribute('aria-pressed', String(!!localStorage.getItem('em-ignore')));
     } catch (e) {}
 
-    var avatar = $('themeBtn');
+    var avatar = $('accountBtn');
     avatar.textContent = initials(state.me.email);
-    avatar.title = state.me.email + ' — click to switch theme';
+    avatar.title = state.me.email;
+    avatar.setAttribute('aria-label', 'Account — ' + state.me.email);
 
     render();
     // A deep link can land on any tab, so the data that tab needs has to be
