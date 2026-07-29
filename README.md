@@ -59,11 +59,11 @@ Use a domain you own rather than the `*.workers.dev` URL. `workers.dev` is a
 shared hostname that ad blockers and corporate DNS filters routinely block
 wholesale, which costs you pageviews silently, and WAF rate limiting rules cannot
 attach to it at all — it is Cloudflare's zone, not yours. That makes
-[step 4 of the post-deploy checklist](POST-DEPLOY.md#4-rate-limit-the-login-endpoint)
-impossible until you have your own. If you enable `workers.dev` anyway for a
-ten-minute look, turn it back off afterwards —
-[POST-DEPLOY.md step 3](POST-DEPLOY.md#3-turn-off-the-workersdev-url) explains
-why an extra live hostname undoes the protections on the real one.
+[the login rate limit](POST-DEPLOY.md#1-rate-limit-the-login-endpoint) impossible
+until you have your own. If you enable `workers.dev` anyway for a ten-minute
+look, turn it back off afterwards —
+[POST-DEPLOY.md](POST-DEPLOY.md#first-confirm-what-getting-started-already-did)
+explains why an extra live hostname undoes the protections on the real one.
 
 ### 3. Claim the instance
 
@@ -302,7 +302,7 @@ Set in `wrangler.jsonc` under `vars`:
 |---|---|---|
 | `HOURLY_RETENTION_DAYS` | `7` | How long hour-resolution data is kept. Daily rollups are kept forever regardless. |
 | `FILTERS` | `on` | Writes `stats_cube`, which is what makes the filter chips work. Set to `off` to trade filtering for a smaller write budget — see [What filtering costs](#what-filtering-costs). |
-| `PBKDF2_ITERATIONS` | `15000` | **A CPU budget concession, not a secure default.** OWASP's figure for PBKDF2-HMAC-SHA256 is 600,000; this is 15,000 because the Workers **free** plan allows 10 ms of CPU per request. The edge rate limit is what compensates. Raising it has a sharp edge — see [POST-DEPLOY.md](POST-DEPLOY.md#13-tune-the-configuration-vars). |
+| `PBKDF2_ITERATIONS` | `15000` | **A CPU budget concession, not a secure default.** OWASP's figure for PBKDF2-HMAC-SHA256 is 600,000; this is 15,000 because the Workers **free** plan allows 10 ms of CPU per request. The edge rate limit is what compensates. Raising it has a sharp edge — see [POST-DEPLOY.md](POST-DEPLOY.md#10-tune-the-configuration-vars). |
 
 That is the whole list, and none of it is required — the defaults are the intended
 configuration. One setting deliberately sits outside this table: **Script URL**,
@@ -485,7 +485,7 @@ CI redeploys. Worth saying plainly in your release notes.
 
 On your first `wrangler deploy`, Wrangler writes the new `database_id` back into
 `wrangler.jsonc`. Do not commit that line to a public fork — see
-[POST-DEPLOY.md](POST-DEPLOY.md#7-keep-database_id-out-of-a-public-fork).
+[POST-DEPLOY.md](POST-DEPLOY.md#4-keep-database_id-out-of-a-public-fork).
 
 ## Known limitations
 
@@ -525,7 +525,7 @@ Being upfront about these:
   429 — ten failed passwords take about as long as one, and the password hash is
   intentionally cheap on top of that. Mitigating it is the operator's job and it
   belongs at the edge, which also means it cannot be done at all while the Worker
-  is on `*.workers.dev`. See [POST-DEPLOY.md](POST-DEPLOY.md#4-rate-limit-the-login-endpoint).
+  is on `*.workers.dev`. See [POST-DEPLOY.md](POST-DEPLOY.md#1-rate-limit-the-login-endpoint).
 - **The ingest endpoint is public**, as it must be. Someone who finds it could
   send junk events and burn through your daily quota — the same exposure every
   analytics tool has. Known bots are dropped before any write, but if you expect

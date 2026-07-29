@@ -13,92 +13,49 @@ Every step below is labelled:
 
 | # | Step | |
 |---|---|---|
-| 1 | [Claim the instance](#1-claim-the-instance) | **Required** |
-| 2 | [Move it to your own domain](#2-move-it-to-your-own-domain) | **Required** |
-| 3 | [Turn off the workers.dev URL](#3-turn-off-the-workersdev-url) | **Required** |
-| 4 | [Rate-limit the login endpoint](#4-rate-limit-the-login-endpoint) | **Required** |
-| 5 | [Make sure you can get back in](#5-make-sure-you-can-get-back-in) | **Required** |
-| 6 | [Check that the rollups are running](#6-check-that-the-rollups-are-running) | **Required** |
-| 7 | [Keep `database_id` out of a public fork](#7-keep-database_id-out-of-a-public-fork) | Required *if public* |
-| 8 | [Put the dashboard behind Cloudflare Access](#8-put-the-dashboard-behind-cloudflare-access) | Recommended |
-| 9 | [Watch the D1 write budget](#9-watch-the-d1-write-budget) | Recommended |
-| 10 | [Rename the tracker file](#10-rename-the-tracker-file) | Recommended |
-| 11 | [Ignore your own visits](#11-ignore-your-own-visits) | Recommended |
-| 12 | [Back up beyond Time Travel](#12-back-up-beyond-time-travel) | Optional |
-| 13 | [Tune the configuration vars](#13-tune-the-configuration-vars) | Optional |
-| 14 | [Add more sites and viewers](#14-add-more-sites-and-viewers) | Optional |
+| 1 | [Rate-limit the login endpoint](#1-rate-limit-the-login-endpoint) | **Required** |
+| 2 | [Make sure you can get back in](#2-make-sure-you-can-get-back-in) | **Required** |
+| 3 | [Check that the rollups are running](#3-check-that-the-rollups-are-running) | **Required** |
+| 4 | [Keep `database_id` out of a public fork](#4-keep-database_id-out-of-a-public-fork) | Required *if public* |
+| 5 | [Put the dashboard behind Cloudflare Access](#5-put-the-dashboard-behind-cloudflare-access) | Recommended |
+| 6 | [Watch the D1 write budget](#6-watch-the-d1-write-budget) | Recommended |
+| 7 | [Rename the tracker file](#7-rename-the-tracker-file) | Recommended |
+| 8 | [Ignore your own visits](#8-ignore-your-own-visits) | Recommended |
+| 9 | [Back up beyond Time Travel](#9-back-up-beyond-time-travel) | Optional |
+| 10 | [Tune the configuration vars](#10-tune-the-configuration-vars) | Optional |
+| 11 | [Add more sites and viewers](#11-add-more-sites-and-viewers) | Optional |
 
 ---
 
-## 1. Claim the instance
+## First, confirm what Getting started already did
 
-**Required. Do this first, before the URL exists anywhere but your address bar.**
+Three things that used to live here are now part of
+[Getting started](README.md#getting-started), because you cannot reach a working
+dashboard without them: **claiming the instance**, **putting it on a hostname you
+own**, and **keeping `*.workers.dev` off**. If you followed the README, all three
+are done.
 
-A freshly deployed instance has no accounts, and `/setup` is open to whoever
-reaches it. The first account created becomes the permanent owner. The claim is
-atomic, which only means two submissions landing in the same instant cannot both
-win — it does nothing about a stranger who simply gets there first.
+They are worth thirty seconds of verification rather than assumption, because
+each one fails silently.
 
-Open the Worker URL and complete the form. It takes fifteen seconds. Until you
-have, treat the URL as a secret.
+**The instance is claimed.** Visit `/setup` on your hostname. You should be
+bounced to the login page. If you get the setup form instead, the instance is
+unclaimed and the first stranger to find that URL becomes its permanent owner —
+go create your account now.
 
-**If the dashboard says "No URLs enabled", there is nothing to open yet** — the
-button does not enable a route. Do [step 2](#2-move-it-to-your-own-domain) first,
-then come straight back here. Doing them in that order is strictly better anyway:
-the instance is never reachable and unclaimed at the same time.
+**It is on your own domain.** Check the address bar. `*.workers.dev` is a shared
+hostname that ad blockers, corporate DNS filters and some countries block
+wholesale, so your beacons vanish with no error and the numbers simply come in
+low. It also belongs to Cloudflare's zone rather than yours, which makes step 1
+below *impossible* — WAF rules cannot attach to it.
 
-## 2. Move it to your own domain
-
-**Required for anything you actually intend to collect data with.**
-
-`*.workers.dev` is fine for a ten-minute look. It is a poor place to leave a
-tracker, for four separate reasons:
-
-- **It is a shared hostname with a bad reputation.** Every free Worker anyone has
-  ever deployed lives under `workers.dev`, including a great deal of abuse. Ad
-  blockers, corporate DNS filters and security appliances routinely block the
-  whole domain. Your beacons get dropped for reasons that have nothing to do with
-  you, and you will not get an error — the numbers just come in low.
-- **Some countries block it outright**, with the same silent result.
-- **Zone-level protections do not apply to it.** This is the concrete one. WAF
-  rate limiting rules attach to a zone in your own account, and `workers.dev` is
-  Cloudflare's zone, not yours. Step 4 is *impossible* until you have your own
-  hostname.
-- **Portability.** The snippet URL is baked into the `<head>` of every site you
-  track. On `workers.dev` that URL belongs to someone else. On your own domain,
-  moving the backend later is a DNS change instead of an edit to every site you
-  own.
-
-In the Cloudflare dashboard: your Worker → **Settings** → **Domains & Routes** →
-**Add custom domain**. Something like `stats.example.com` is conventional.
-Cloudflare creates the proxied DNS record for you.
-
-Then update the snippet on your sites to point at the new hostname. The tracker
-derives its beacon endpoint from its own `src`, so changing the snippet is the
-only change needed — there is no server-side setting to match.
-
-## 3. Turn off the workers.dev URL
-
-**Required, once step 2 is done. Possibly already true — verify, do not assume.**
-
-If you deployed with the button, Cloudflare most likely never enabled
-`workers.dev` in the first place, and this step is a check rather than a change.
-If you deployed with `wrangler deploy`, it is live right now. Either way, confirm
-with the `curl` below rather than trusting the dashboard's summary.
-
-This is the step that makes the others hold. Access policies, rate limiting rules
-and firewall rules all attach to your hostname. If the Worker stays reachable at
-`edgemetry.<your-subdomain>.workers.dev`, that URL bypasses every one of them and
-serves the dashboard login to anyone who guesses it. It is the same mistake as
-leaving an origin IP exposed behind a WAF.
-
-In `wrangler.jsonc`:
-
-```jsonc
-"workers_dev": false
-```
-
-Redeploy, then confirm it is actually gone:
+**`workers.dev` is off.** This is the one people miss, because the dashboard is
+working fine by then. An extra live hostname bypasses every protection you attach
+to the real one — Access policies, rate limiting, firewall rules — and serves the
+login page to anyone who guesses it, the same mistake as leaving an origin IP
+exposed behind a WAF. Button deploys most likely never enabled it; a
+`wrangler deploy` did. Set `"workers_dev": false` in `wrangler.jsonc`, redeploy,
+and confirm rather than trusting the dashboard summary:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://edgemetry.<your-subdomain>.workers.dev/
@@ -106,14 +63,21 @@ curl -s -o /dev/null -w '%{http_code}\n' https://edgemetry.<your-subdomain>.work
 
 Anything other than a connection failure or a 404 means it is still live.
 
-## 4. Rate-limit the login endpoint
+One thing Getting started does not mention: when you move to a new hostname later,
+update the snippet on your sites. The tracker derives its beacon endpoint from its
+own `src`, so the snippet is the only change — there is no server-side setting to
+match.
+
+---
+
+## 1. Rate-limit the login endpoint
 
 **Required.**
 
 `POST /login` has no throttle of its own — no lockout, no backoff, no 429. Ten
 wrong passwords cost an attacker about as much time as one correct one, and the
 password hash is deliberately cheap on top of that (see `PBKDF2_ITERATIONS` in
-step 13). The throttle is meant to sit in front of the Worker.
+step 10). The throttle is meant to sit in front of the Worker.
 
 1. In the Cloudflare dashboard, select the **zone** your Worker runs on and open
    **Security rules**. On older navigation this is **Security** → **WAF** →
@@ -132,10 +96,10 @@ the form as well as the `POST` that submits it — which is why the limit is 5 a
 not 1. Ten seconds is a short memory. Treat this as removing the cheap unbounded
 burst, not as a lockout. A long random password is still doing most of the work.
 
-If you do step 8, Access makes this largely moot — nobody reaches `/login` at all
+If you do step 5, Access makes this largely moot — nobody reaches `/login` at all
 without passing SSO first. The rule is still worth having underneath.
 
-## 5. Make sure you can get back in
+## 2. Make sure you can get back in
 
 **Required. Two minutes now, or an afternoon later.**
 
@@ -176,7 +140,7 @@ Delete `reset.sql` afterwards. Bumping `token_version` is deliberate: it
 invalidates every session cookie outstanding for that account, so if the reason
 you are here is that somebody else got in, this evicts them too.
 
-## 6. Check that the rollups are running
+## 3. Check that the rollups are running
 
 **Required, once, a day or two after you deploy.**
 
@@ -200,7 +164,7 @@ The table names carry their hour as `ev_YYYYMMDDHH`. You should only ever see
 today's, and possibly yesterday's. Anything older than that means the daily job is
 not running — check the Worker's cron triggers are registered and look at its logs.
 
-## 7. Keep `database_id` out of a public fork
+## 4. Keep `database_id` out of a public fork
 
 **Required if you are publishing your fork. Skip if it stays private.**
 
@@ -217,7 +181,7 @@ already created:
 git checkout wrangler.jsonc
 ```
 
-## 8. Put the dashboard behind Cloudflare Access
+## 5. Put the dashboard behind Cloudflare Access
 
 **Recommended. Free for up to 50 users.**
 
@@ -238,7 +202,7 @@ The clean arrangement is two custom domains on the same Worker:
 Access then covers an entire hostname, which is the configuration with no sharp
 edges. The alternative — one hostname, Access on `/` plus Bypass policies on the
 tracker paths — does work, since the more specific path wins. Avoid it. The bypass
-list has to match whichever filename you chose in step 10, and if you ever rename
+list has to match whichever filename you chose in step 7, and if you ever rename
 that file, tracking dies silently behind a login page.
 
 **Once the two hostnames are up, tell the dashboard about the public one.** Under
@@ -258,7 +222,7 @@ Two things to know before committing:
 - **Scripted API access breaks.** Calls to `/api/timeseries` and friends will get
   an HTML login page unless they carry an Access service token.
 
-## 9. Watch the D1 write budget
+## 6. Watch the D1 write budget
 
 **Recommended.**
 
@@ -272,9 +236,9 @@ number that actually moves is the filter cube, whose cost scales with how *varie
 your traffic is rather than how much of it there is.
 
 Check usage in the Cloudflare dashboard under your D1 database. If you are running
-close, `FILTERS=off` (step 13) is the biggest single lever.
+close, `FILTERS=off` (step 10) is the biggest single lever.
 
-## 10. Rename the tracker file
+## 7. Rename the tracker file
 
 **Recommended.**
 
@@ -287,9 +251,9 @@ The dashboard cannot guess which name you picked — the Worker answers to all o
 them — so put the new one in **Install & sites → Script URL** and the snippet it
 shows stays copy-pasteable.
 
-Pick this before step 8 if you are using Access with path bypasses.
+Pick this before step 5 if you are using Access with path bypasses.
 
-## 11. Ignore your own visits
+## 8. Ignore your own visits
 
 **Recommended, or your own reloads will be a meaningful share of a small site.**
 
@@ -302,7 +266,7 @@ localStorage.setItem('em-ignore', '1')
 
 The dashboard's **Install & sites** panel has a button that copies this for you.
 
-## 12. Back up beyond Time Travel
+## 9. Back up beyond Time Travel
 
 **Optional.**
 
@@ -320,7 +284,7 @@ npx wrangler d1 export edgemetry --remote --output edgemetry-backup.sql
 
 Worth doing on a schedule if the history matters to you.
 
-## 13. Tune the configuration vars
+## 10. Tune the configuration vars
 
 **Optional.** All of these live under `vars` in `wrangler.jsonc`.
 
@@ -337,11 +301,11 @@ Two more that are not `vars`:
   grows. Turn it down when it stops being interesting.
 - **Script URL** lives in the dashboard under **Install & sites**, not in
   `wrangler.jsonc`. It is a deliberate exception: the value depends on the
-  hostname you ended up on, the filename you chose in step 10 and whether you did
-  step 8, none of which are knowable at deploy time. It is stored in D1, so a
+  hostname you ended up on, the filename you chose in step 7 and whether you did
+  step 5, none of which are knowable at deploy time. It is stored in D1, so a
   redeploy does not reset it.
 
-## 14. Add more sites and viewers
+## 11. Add more sites and viewers
 
 **Optional.**
 
