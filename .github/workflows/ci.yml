@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A fork that syncs from upstream should be able to see, at a glance, that the
+# version it is about to deploy type-checks and passes its tests. The suite runs
+# inside the real Workers runtime via @cloudflare/vitest-pool-workers, so a pass
+# here means the same code paths the Worker uses actually ran.
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # worker-configuration.d.ts is committed, so this only fails if it has
+      # drifted from wrangler.jsonc — which is exactly when it should.
+      - run: npm run typecheck
+
+      - run: npm test

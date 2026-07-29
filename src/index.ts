@@ -297,7 +297,12 @@ app.post('/logout', (c) => {
 
 app.get('/api/me', async (c) => {
   const user = c.get('user');
-  return c.json({ user: toPublicUser(user, await siteIdsFor(c.env.DB, user.id)) });
+  return c.json({
+    user: toPublicUser(user, await siteIdsFor(c.env.DB, user.id)),
+    // Empty unless the operator set it, in which case the console shows this
+    // instead of guessing its own origin. See TRACKER_URL in wrangler.jsonc.
+    trackerUrl: (c.env.TRACKER_URL ?? '').trim(),
+  });
 });
 
 app.post('/api/me/password', async (c) => {
