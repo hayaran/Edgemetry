@@ -11,4 +11,4 @@
  * Bump this and `package.json` together — CI fails the build if they drift —
  * and tag the release `v<this>` so the update check has something to find.
  */
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
