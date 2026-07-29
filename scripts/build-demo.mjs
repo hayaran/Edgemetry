@@ -19,6 +19,7 @@
  * file only moves bytes.
  */
 
+import { randomBytes } from 'node:crypto';
 import { mkdir, copyFile, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -101,12 +102,47 @@ html = replaceOnce(
 
 html = replaceOnce(html, '<title>Edgemetry</title>', '<title>Edgemetry — live demo</title>', 'the title');
 
+/*
+ * The content policy, which the Worker sets as a header and Pages cannot.
+ *
+ * Without this the demo would run with no policy at all, since GitHub Pages
+ * sends none — and the page carries a `nonce="{{nonce}}"` the Worker fills in
+ * per request, so leaving it alone would also ship a literal placeholder.
+ *
+ * Kept deliberately equal to `securityHeaders()` in src/index.ts, minus the two
+ * parts a <meta> cannot express: `frame-ancestors` is ignored in meta form (the
+ * demo relies on Pages' own `x-frame-options` instead), and the non-CSP headers
+ * alongside it are headers, not policy. If that function grows a directive, this
+ * needs the same one — the demo is meant to hold the line the product does, not
+ * to be the one page in the project running unprotected.
+ */
+const nonce = randomBytes(16).toString('hex');
+const policy = [
+  "default-src 'self'",
+  `script-src 'nonce-${nonce}'`,
+  "style-src 'self' 'unsafe-inline'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+].join('; ');
+
+html = replaceOnce(html, '{{nonce}}', nonce, 'the {{nonce}} placeholder');
+
+// First thing in the head: a policy only governs what comes after it.
+html = replaceOnce(
+  html,
+  '<meta charset="utf-8">',
+  `<meta charset="utf-8">\n<meta http-equiv="Content-Security-Policy" content="${policy}">`,
+  'the charset meta tag',
+);
+
 // Before the dashboard's own script, which runs at the end of the body: the
-// shim has to be installed before the first fetch goes out.
+// shim has to be installed before the first fetch goes out. It carries the
+// nonce because `script-src` above allows nothing else.
 html = replaceOnce(
   html,
   '</head>',
-  '<script src="./demo-mock.js"></script>\n</head>',
+  `<script nonce="${nonce}" src="./demo-mock.js"></script>\n</head>`,
   'the closing </head> tag',
 );
 
