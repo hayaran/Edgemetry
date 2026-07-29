@@ -42,6 +42,11 @@ win — it does nothing about a stranger who simply gets there first.
 Open the Worker URL and complete the form. It takes fifteen seconds. Until you
 have, treat the URL as a secret.
 
+**If the dashboard says "No URLs enabled", there is nothing to open yet** — the
+button does not enable a route. Do [step 2](#2-move-it-to-your-own-domain) first,
+then come straight back here. Doing them in that order is strictly better anyway:
+the instance is never reachable and unclaimed at the same time.
+
 ## 2. Move it to your own domain
 
 **Required for anything you actually intend to collect data with.**
@@ -74,7 +79,12 @@ only change needed — there is no server-side setting to match.
 
 ## 3. Turn off the workers.dev URL
 
-**Required, once step 2 is done.**
+**Required, once step 2 is done. Possibly already true — verify, do not assume.**
+
+If you deployed with the button, Cloudflare most likely never enabled
+`workers.dev` in the first place, and this step is a check rather than a change.
+If you deployed with `wrangler deploy`, it is live right now. Either way, confirm
+with the `curl` below rather than trusting the dashboard's summary.
 
 This is the step that makes the others hold. Access policies, rate limiting rules
 and firewall rules all attach to your hostname. If the Worker stays reachable at

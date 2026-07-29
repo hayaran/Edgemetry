@@ -44,9 +44,30 @@ Click the button. Cloudflare will sign you in, copy this repository into your ow
 GitHub or GitLab account, **create the D1 database automatically**, and deploy
 the Worker. There is no API token to generate and nothing to paste.
 
-### 2. Create your account
+### 2. Give it a hostname
 
-Open your new Worker URL. The first visit shows a short setup form: your email, a
+A freshly created Worker has no route enabled — the dashboard shows **No URLs
+enabled**, and there is nothing to open yet. This step is on you, and the choice
+you make here is the one worth getting right, because the hostname ends up baked
+into the `<head>` of every site you track.
+
+In the Cloudflare dashboard: your Worker → **Settings** → **Domains & Routes** →
+**Add custom domain**. Something like `analytics.example.com` is conventional,
+and Cloudflare creates the proxied DNS record for you.
+
+Use a domain you own rather than the `*.workers.dev` URL. `workers.dev` is a
+shared hostname that ad blockers and corporate DNS filters routinely block
+wholesale, which costs you pageviews silently, and WAF rate limiting rules cannot
+attach to it at all — it is Cloudflare's zone, not yours. That makes
+[step 4 of the post-deploy checklist](POST-DEPLOY.md#4-rate-limit-the-login-endpoint)
+impossible until you have your own. If you enable `workers.dev` anyway for a
+ten-minute look, turn it back off afterwards —
+[POST-DEPLOY.md step 3](POST-DEPLOY.md#3-turn-off-the-workersdev-url) explains
+why an extra live hostname undoes the protections on the real one.
+
+### 3. Claim the instance
+
+Open your new hostname. The first visit shows a short setup form: your email, a
 password, and the domain you want to track. That is the entire configuration step
 — the database schema creates itself on first request.
 
@@ -54,16 +75,18 @@ password, and the domain you want to track. That is the entire configuration ste
 account exists, `/setup` is open to whoever reaches it, and that account becomes
 the permanent owner. Until you have claimed it, treat the URL as a secret.
 
-### 3. Add the snippet
+### 4. Add the snippet
 
-Copy the snippet from the dashboard's **Install & sites** section into your
-site's `<head>`:
+The dashboard takes over from here: it shows the exact snippet for your instance
+under **Install & sites**, already filled in with your hostname and domain. Copy
+it into your site's `<head>`.
 
 ```html
-<script defer src="https://your-worker.workers.dev/em.js" data-domain="example.com"></script>
+<script defer src="https://analytics.example.com/em.js" data-domain="example.com"></script>
 ```
 
-Traffic appears immediately.
+The Overview page waits for the first pageview and fills itself in — no refresh
+needed.
 
 ### Deploying from a terminal instead
 
@@ -72,13 +95,17 @@ npm install && npx wrangler deploy
 ```
 
 Wrangler provisions the D1 database on first deploy, the same as the button does.
+Unlike the button, it also enables the `*.workers.dev` URL, so you get a
+reachable hostname immediately — which means step 3 becomes urgent rather than
+merely important. Claim the instance, then add your own domain and turn
+`workers.dev` off.
 
 ## Before you rely on it
 
 A deployed Worker is not yet a safe one. Three things in particular are on you,
-not on the deploy button: claiming the instance, moving it off `*.workers.dev`
-onto a domain you control, and putting a rate limit in front of `/login`, which
-has no throttle of its own.
+not on the deploy button: claiming the instance, keeping it on a hostname you
+control with `*.workers.dev` switched off, and putting a rate limit in front of
+`/login`, which has no throttle of its own.
 
 **→ [POST-DEPLOY.md](POST-DEPLOY.md)** is the checklist, with each step marked
 required, recommended or optional. It also covers what to do when you lose the
