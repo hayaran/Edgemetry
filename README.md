@@ -81,7 +81,7 @@ the permanent owner. Until you have claimed it, treat the URL as a secret.
 ### 4. Add the snippet
 
 The dashboard takes over from here: it shows the exact snippet for your instance
-under **Install & sites**, already filled in with your hostname and domain. Copy
+under **Settings**, already filled in with your hostname and domain. Copy
 it into your site's `<head>`.
 
 ```html
@@ -116,8 +116,8 @@ only owner password, since there is no reset flow.
 
 ## Sites and team access
 
-One deployment serves as many sites as you like. Add them in the dashboard under
-**Install & sites**; each gets its own snippet, and traffic is fully isolated —
+One deployment serves as many sites as you like. Add them from the site switcher
+in the top left of the dashboard; each gets its own snippet, and traffic is fully isolated —
 the same visitor even hashes differently per site, so cross-site tracking is
 impossible by construction. Site count costs nothing; only total traffic counts
 against the free tier.
@@ -310,7 +310,7 @@ Set in `wrangler.jsonc` under `vars`:
 
 That is the whole list, and none of it is required — the defaults are the intended
 configuration. One setting deliberately sits outside this table: **Script URL**,
-under **Install & sites** in the dashboard, which overrides the `src` in the
+under **Settings** in the dashboard, which overrides the `src` in the
 install snippet. It is not a `var` because its value does not exist until after
 the first deploy — it depends on the hostname you landed on, whether you renamed
 the tracker file, and whether you later split the dashboard onto its own hostname
