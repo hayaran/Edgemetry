@@ -135,6 +135,64 @@ function parseSiteIds(value: unknown): number[] {
   return [...new Set(value.map((v) => Number(v)).filter((n) => Number.isInteger(n) && n > 0))];
 }
 
+/* ------------------------------------------------------- browser defences -- */
+
+/**
+ * The headers that go on every HTML surface this Worker serves.
+ *
+ * `frame-ancestors` is the load-bearing one. The console renders "Remove user"
+ * and "Remove site" as ordinary buttons wired to authenticated DELETE calls, so
+ * a page that could load the dashboard in a transparent frame could have an
+ * owner destroy accounts while clicking on something else entirely.
+ * X-Frame-Options repeats it for browsers old enough to predate the directive.
+ *
+ * `default-src 'self'` is affordable here only because it is already true:
+ * typefaces, the country outlines and every API call come from this Worker, and
+ * there is no third-party origin anywhere in the product. Enforcing that in the
+ * browser turns a claim in the README into something a visitor can verify.
+ *
+ * `script-src` takes a per-request nonce rather than `'unsafe-inline'`, because
+ * the console displays paths, referrers, UTM values and event names that anyone
+ * on the internet can put into the database through the public ingest endpoint.
+ * Every one of those is escaped where it is written into the page — this is a
+ * second layer rather than the only one, which is exactly what it is for.
+ *
+ * Applied at each HTML response rather than by `app.use('*')` middleware, on
+ * purpose. The tracker script and the ingest endpoint are fetched cross-origin
+ * from other people's sites, where a content policy for this origin means
+ * nothing and a stray header is only weight on the hottest path in the system.
+ */
+function securityHeaders(scriptSrc: string): Record<string, string> {
+  return {
+    'content-security-policy': [
+      "default-src 'self'",
+      `script-src ${scriptSrc}`,
+      // The one directive that stays loose. The console builds most of its
+      // markup as strings carrying `style="..."` attributes, and no nonce can
+      // cover an attribute, so restyling remains possible under an injection.
+      // It cannot become exfiltration: every fetch directive resolves to
+      // 'self', so injected CSS has nowhere off-origin to send anything.
+      "style-src 'self' 'unsafe-inline'",
+      "object-src 'none'",
+      "base-uri 'none'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+    ].join('; '),
+    'x-frame-options': 'DENY',
+    'x-content-type-options': 'nosniff',
+    // The console keeps the site, date range and active filters in the URL, and
+    // those describe someone's traffic. Nothing here needs a referrer sent for
+    // it, so none is sent at all.
+    'referrer-policy': 'no-referrer',
+    // A per-request nonce must not come back out of a cache attached to a page
+    // some other request will read, and these pages are private anyway.
+    'cache-control': 'no-store',
+  };
+}
+
+/** Sign-in and setup run no script at all, so none needs to be allowed. */
+const PAGE_HEADERS = securityHeaders("'none'");
+
 app.use('*', async (c, next) => {
   await ensureSchema(c.env.DB);
   await next();
@@ -153,7 +211,12 @@ app.post('/api/event', (c) => handleIngest(c.req.raw, c.env));
 /* -------------------------------------------------------------- sessions -- */
 
 app.use('/api/*', async (c, next) => {
-  if (c.req.path === '/api/event') return next();
+  // The two /api routes that must answer a signed-out request: ingest, which
+  // is called by other people's visitors, and the typefaces, which the login
+  // and setup screens ask for before anyone has a session — gate those and the
+  // first thing a new deployment shows is a page in fallback fonts. The prefix
+  // carries its trailing slash so it cannot widen to any other /api route.
+  if (c.req.path === '/api/event' || c.req.path.startsWith('/api/fonts/')) return next();
 
   const user = await loadUser(c.env, getCookie(c, SESSION_COOKIE));
   if (!user) return c.json({ error: 'unauthorized' }, 401);
@@ -164,7 +227,7 @@ app.use('/api/*', async (c, next) => {
 
 app.get('/setup', async (c) => {
   if (await setupComplete(c.env)) return c.redirect('/login', 302);
-  return c.html(setupPage());
+  return c.html(setupPage(), 200, PAGE_HEADERS);
 });
 
 app.post('/setup', async (c) => {
@@ -176,13 +239,17 @@ app.post('/setup', async (c) => {
   const confirm = String(form.confirm ?? '');
   const domain = normalizeDomain(String(form.domain ?? ''));
 
-  if (!isValidEmail(email)) return c.html(setupPage('Enter a valid email address.'), 400);
+  if (!isValidEmail(email)) return c.html(setupPage('Enter a valid email address.'), 400, PAGE_HEADERS);
   if (password.length < MIN_PASSWORD_LENGTH) {
-    return c.html(setupPage(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`), 400);
+    return c.html(
+      setupPage(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`),
+      400,
+      PAGE_HEADERS,
+    );
   }
-  if (password !== confirm) return c.html(setupPage('Passwords do not match.'), 400);
+  if (password !== confirm) return c.html(setupPage('Passwords do not match.'), 400, PAGE_HEADERS);
   if (!DOMAIN_PATTERN.test(domain)) {
-    return c.html(setupPage('Enter a bare domain, for example example.com'), 400);
+    return c.html(setupPage('Enter a bare domain, for example example.com'), 400, PAGE_HEADERS);
   }
 
   // Atomic: whoever wins this insert owns the instance. A second person racing a
@@ -200,7 +267,7 @@ app.post('/setup', async (c) => {
 
 app.get('/login', async (c) => {
   if (!(await setupComplete(c.env))) return c.redirect('/setup', 302);
-  return c.html(loginPage());
+  return c.html(loginPage(), 200, PAGE_HEADERS);
 });
 
 app.post('/login', async (c) => {
@@ -213,7 +280,9 @@ app.post('/login', async (c) => {
   const user = await getUserByEmail(c.env.DB, email);
   // One message for both failure modes — this must not reveal which accounts exist.
   const ok = user !== null && (await verifyPassword(user, password, iterationsFor(c.env)));
-  if (!user || !ok) return c.html(loginPage('Incorrect email or password.'), 401);
+  if (!user || !ok) {
+    return c.html(loginPage('Incorrect email or password.'), 401, PAGE_HEADERS);
+  }
 
   setCookie(c, SESSION_COOKIE, await startSession(c.env, user), sessionCookieOptions(isSecure(c.req.url)));
   return c.redirect('/', 302);
@@ -588,8 +657,11 @@ app.get('/api/world.json', (c) =>
 
 /** The console's typefaces, for the same reason. See scripts/build-fonts.mjs. */
 app.get('/api/fonts/:file', (c) => {
-  const encoded = FONT_FILES[c.req.param('file')];
-  if (!encoded) return c.notFound();
+  const file = c.req.param('file');
+  // Own-property check, because a bare lookup walks the prototype chain and
+  // would hand `/api/fonts/constructor` a function for atob() to choke on.
+  if (!Object.hasOwn(FONT_FILES, file)) return c.notFound();
+  const encoded = FONT_FILES[file]!;
 
   const binary = atob(encoded);
   const bytes = new Uint8Array(binary.length);
@@ -604,15 +676,23 @@ app.get('/api/fonts/:file', (c) => {
 /* ------------------------------------------------------------- dashboard -- */
 
 // The @font-face rules are generated alongside the font files, so the two
-// cannot drift; splicing them in once at module scope keeps the HTML a plain
-// static string.
-const dashboardHtml = dashboardTemplate.replace('/*fonts*/', FONT_FACE_CSS);
+// cannot drift; splicing them in once at module scope leaves only the script
+// nonce to fill in per request. That last substitution costs around eight
+// microseconds on the ~95KB page, which is nothing next to the database work
+// the same request is already doing.
+const dashboardTemplateWithFonts = dashboardTemplate.replace('/*fonts*/', FONT_FACE_CSS);
 
 app.get('/', async (c) => {
   if (!(await setupComplete(c.env))) return c.redirect('/setup', 302);
   const user = await loadUser(c.env, getCookie(c, SESSION_COOKIE));
   if (!user) return c.redirect('/login', 302);
-  return c.html(dashboardHtml);
+
+  const nonce = randomHex(16);
+  return c.html(
+    dashboardTemplateWithFonts.replace('{{nonce}}', nonce),
+    200,
+    securityHeaders(`'nonce-${nonce}'`),
+  );
 });
 
 app.get('/health', (c) => c.json({ ok: true }));

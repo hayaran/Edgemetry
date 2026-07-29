@@ -185,7 +185,7 @@ export function loginPage(error?: string): string {
       'No cookies, no fingerprints, no third party. Visitors are counted with a hash that is thrown ' +
         'away every night, so there is nothing to sell and nothing to leak.',
       FACTS,
-      'Not your instance? <a href="https://github.com/nitinhayaran/Edgemetry">Deploy your own in one click →</a>',
+      'Not your instance? <a href="https://github.com/hayaran/Edgemetry">Deploy your own in one click →</a>',
     ),
     `<div style="display:flex;flex-direction:column;gap:5px">
        <h2>Welcome back</h2>
