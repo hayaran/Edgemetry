@@ -1261,13 +1261,38 @@ function checklist(text, done) {
     '<span class="check' + (done ? '' : ' off') + '">' + (done ? '✓' : '') + '</span>' + esc(text) + '</span>';
 }
 
+// The right guess while the tracker is still served from this origin under its
+// original name — which is true of every instance until someone changes it.
+function defaultTrackerUrl() {
+  return location.origin + '/em.js';
+}
+
 function snippetBlock() {
-  // The dashboard's own origin is only the right guess while the tracker is
-  // still served from it under its original name. TRACKER_URL overrides it.
-  var src = state.trackerUrl || (location.origin + '/em.js');
+  var src = state.trackerUrl || defaultTrackerUrl();
   var snippet = '<script defer src="' + src + '" data-domain="' + state.siteDomain() + '"><\/script>';
   return '<div class="code" style="width:100%;max-width:520px"><span id="snippet">' + esc(snippet) + '</span>' +
     '<div class="actions"><button id="copySnippet">Copy snippet</button></div></div>';
+}
+
+/**
+ * The override, for the two cases where this origin is the wrong answer: the
+ * tracker was renamed, or it lives on a different hostname than the dashboard —
+ * the arrangement Access needs, since beacons come from visitors who never sign
+ * in. Owners only; a viewer cannot change what everyone else installs.
+ */
+function trackerUrlRow() {
+  if (!state.me || state.me.role !== 'owner') return '';
+  return '<form class="settings-row" id="trackerUrlForm">' +
+    '<span><span class="t">Script URL</span>' +
+      '<span class="s">Set this if you renamed the tracker file, or if it is served from a ' +
+      'different hostname than this dashboard. Leave it empty for ' +
+      '<span class="mono">' + esc(defaultTrackerUrl()) + '</span>.</span>' +
+      '<span class="note" id="trackerUrlNote"></span></span>' +
+    '<span style="display:flex;gap:8px;align-items:center;flex:none">' +
+      '<input class="field" id="trackerUrlInput" style="width:230px" type="url" spellcheck="false" ' +
+      'placeholder="' + esc(defaultTrackerUrl()) + '" value="' + esc(state.trackerUrl) + '" ' +
+      'aria-label="Tracker script URL">' +
+      '<button class="btn" type="submit">Save</button></span></form>';
 }
 
 function settingsScreen() {
@@ -1306,9 +1331,9 @@ function settingsScreen() {
     '<section class="panel"><span class="cap">install</span>' +
       '<p class="lede">Rename <span class="mono" style="font-size:12.5px">em.js</span> to anything you like — ' +
       'the endpoint follows the filename, which is what keeps path-based blocklists from matching every deployment. ' +
-      'Set <span class="mono" style="font-size:12.5px">TRACKER_URL</span> once you do, or once the tracker lives on ' +
-      'a different hostname than this dashboard, so the snippet above stays correct.</p>' +
+      'Tell the snippet below where you put it and it stays correct.</p>' +
       snippetBlock() +
+      trackerUrlRow() +
       '<div class="settings-row"><span><span class="t">Raw events</span>' +
         '<span class="s">Kept until the nightly rollup, then dropped. Daily rollups are permanent.</span></span>' +
         '<span class="mono" style="color:var(--signal)">~1 day</span></div>' +
@@ -1858,6 +1883,17 @@ document.addEventListener('submit', function (event) {
       render();
       toast('User created');
     });
+  }
+
+  if (form.id === 'trackerUrlForm') {
+    event.preventDefault();
+    return post('/api/settings/tracker-url', { url: $('trackerUrlInput').value }, 'PUT')
+      .then(function (data) {
+        if (data.error) { $('trackerUrlNote').textContent = data.error; return; }
+        state.trackerUrl = data.trackerUrl;
+        render();
+        toast(data.trackerUrl ? 'Snippet updated' : 'Back to this origin');
+      });
   }
 
   if (form.id === 'changePassword') {

@@ -68,8 +68,8 @@
    *
    * Left to itself the console guesses its own origin, which on the demo is a
    * github.io address — an install snippet nobody could ever use. This is the
-   * same override a real operator sets as TRACKER_URL when the tracker is
-   * served from somewhere other than the dashboard.
+   * same override a real operator saves under Install & sites when the tracker
+   * is served from somewhere other than the dashboard.
    */
   var TRACKER_URL = 'https://stats.edgemetry.dev/em.js';
 

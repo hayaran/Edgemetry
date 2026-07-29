@@ -74,6 +74,17 @@ const RESERVED_PATHS = new Set([
 
 const DOMAIN_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
+/**
+ * The `src` the console prints in its install snippet.
+ *
+ * An instance preference rather than a deployment variable, because the answer
+ * only exists after the deployment does: it depends on the hostname you ended
+ * up on, the filename you chose for the tracker, and whether you later put the
+ * dashboard behind Access on a hostname of its own. Empty — the normal case —
+ * means the console works it out from its own origin.
+ */
+const SETTING_TRACKER_URL = 'tracker_url';
+
 type AppEnv = { Bindings: Env; Variables: { user: UserRow } };
 type AppContext = Context<AppEnv>;
 
@@ -299,9 +310,9 @@ app.get('/api/me', async (c) => {
   const user = c.get('user');
   return c.json({
     user: toPublicUser(user, await siteIdsFor(c.env.DB, user.id)),
-    // Empty unless the operator set it, in which case the console shows this
-    // instead of guessing its own origin. See TRACKER_URL in wrangler.jsonc.
-    trackerUrl: (c.env.TRACKER_URL ?? '').trim(),
+    // Empty unless an owner set it, in which case the console shows this
+    // instead of guessing its own origin. See PUT /api/settings/tracker-url.
+    trackerUrl: (await getSetting(c.env.DB, SETTING_TRACKER_URL)) ?? '',
   });
 });
 
@@ -329,6 +340,46 @@ app.post('/api/me/password', async (c) => {
     setCookie(c, SESSION_COOKIE, await startSession(c.env, updated), sessionCookieOptions(isSecure(c.req.url)));
   }
   return c.json({ ok: true });
+});
+
+/* ----------------------------------------------------- instance settings -- */
+
+/**
+ * Validate a tracker URL, returning the value to store or `null` to reject.
+ *
+ * The `.js` suffix is required rather than merely conventional. The script
+ * derives its beacon endpoint by stripping `.js` off its own `src`, so a URL
+ * without one posts back to the script's own path and is answered with the
+ * script — tracking that fails silently, which is the failure this whole
+ * setting exists to prevent.
+ */
+export function normalizeTrackerUrl(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return '';
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  if (!url.pathname.endsWith('.js')) return null;
+  return url.href;
+}
+
+app.put('/api/settings/tracker-url', async (c) => {
+  if (!isOwner(c.get('user'))) return c.json({ error: 'owner access required' }, 403);
+
+  const body = await c.req.json<{ url?: unknown }>().catch(() => ({}) as Record<string, unknown>);
+  const trackerUrl = normalizeTrackerUrl(String(body.url ?? ''));
+  if (trackerUrl === null) {
+    return c.json({ error: 'enter a full URL ending in .js, or leave it empty' }, 400);
+  }
+
+  await setSetting(c.env.DB, SETTING_TRACKER_URL, trackerUrl);
+  return c.json({ trackerUrl });
 });
 
 /* ----------------------------------------------------------------- sites -- */

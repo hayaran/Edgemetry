@@ -49,15 +49,13 @@
     // PBKDF2 iterations for the admin password. The Workers *free* plan caps
     // CPU at 10ms per request, which is why this is not the usual 100k+.
     // On the $5/mo paid plan you can safely raise this to 200000.
-    "PBKDF2_ITERATIONS": "15000",
-    // The script URL the dashboard prints in its install snippet. Empty means
-    // "this Worker, serving /em.js", which is right until either of two things
-    // is true: you renamed the tracker to dodge path-based blocklists, or you
-    // put the dashboard on its own hostname and left ingest on another — the
-    // arrangement Cloudflare Access needs, since the beacon endpoint has to
-    // stay reachable by visitors who will never sign in. In both cases the
-    // dashboard cannot infer the answer from its own origin, so set it here,
-    // for example "https://t.example.com/xyz.js".
-    "TRACKER_URL": ""
+    "PBKDF2_ITERATIONS": "15000"
   }
+
+  // Note: the URL the dashboard prints in its install snippet is deliberately
+  // *not* a var. It is only knowable after the first deploy — it depends on the
+  // hostname you landed on, the filename you picked for the tracker, and
+  // whether you later split the dashboard onto its own hostname behind Access.
+  // Asking for it here would mean a required field with no answer yet, so it
+  // lives under Install & sites in the dashboard instead.
 }

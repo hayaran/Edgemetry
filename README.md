@@ -277,6 +277,15 @@ Set in `wrangler.jsonc` under `vars`:
 | `FILTERS` | `on` | Writes `stats_cube`, which is what makes the filter chips work. Set to `off` to trade filtering for a smaller write budget — see [What filtering costs](#what-filtering-costs). |
 | `PBKDF2_ITERATIONS` | `15000` | **A CPU budget concession, not a secure default.** OWASP's figure for PBKDF2-HMAC-SHA256 is 600,000; this is 15,000 because the Workers **free** plan allows 10 ms of CPU per request. The edge rate limit is what compensates. Raising it has a sharp edge — see [POST-DEPLOY.md](POST-DEPLOY.md#13-tune-the-configuration-vars). |
 
+That is the whole list, and none of it is required — the defaults are the intended
+configuration. One setting deliberately sits outside this table: **Script URL**,
+under **Install & sites** in the dashboard, which overrides the `src` in the
+install snippet. It is not a `var` because its value does not exist until after
+the first deploy — it depends on the hostname you landed on, whether you renamed
+the tracker file, and whether you later split the dashboard onto its own hostname
+behind Access. Empty means "this origin, serving `/em.js`", which is correct for
+every instance that has not done one of those things.
+
 ## Testing it
 
 ### Run it locally
