@@ -13,6 +13,7 @@ import dashboardTemplate from './dashboard.html';
 import { ensureSchema, getSetting, setSetting } from './db';
 import { FONT_FACE_CSS, FONT_FILES } from './fonts';
 import { isBreakdownDim } from './dimensions';
+import { FAVICON_SVG } from './favicon';
 import { corsPreflight, handleIngest } from './ingest';
 import { loginPage, setupPage } from './pages';
 import {
@@ -70,6 +71,7 @@ const RESERVED_PATHS = new Set([
   'health',
   'robots.txt',
   'favicon.ico',
+  'favicon.svg',
 ]);
 
 const DOMAIN_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
@@ -754,6 +756,25 @@ app.get('/', async (c) => {
 app.get('/health', (c) => c.json({ ok: true }));
 
 app.get('/robots.txt', (c) => c.text('User-agent: *\nDisallow: /\n'));
+
+/* ----------------------------------------------------------------- icon -- */
+
+// Served on both names. `/favicon.svg` is what the pages link to; `/favicon.ico`
+// is what a browser asks for on its own before it has parsed any markup, and
+// answering that with the SVG — which browsers accept, since they go by the
+// content type rather than the extension — is cheaper than a second asset and
+// quieter than a 404 on every cold load.
+//
+// Public and cacheable, unlike every HTML surface here: the mark is the same
+// bytes for everyone and says nothing about who asked for it.
+const faviconResponse = (c: AppContext) =>
+  c.body(FAVICON_SVG, 200, {
+    'content-type': 'image/svg+xml',
+    'cache-control': 'public, max-age=86400',
+  });
+
+app.get('/favicon.svg', faviconResponse);
+app.get('/favicon.ico', faviconResponse);
 
 /* ------------------------------------- tracker script + matching endpoint -- */
 

@@ -25,6 +25,7 @@ function layout(title: string, aside: string, form: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>${escapeHtml(title)}</title>
 <style>
 ${FONT_FACE_CSS}

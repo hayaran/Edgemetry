@@ -29,13 +29,14 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const out = join(root, 'demo-dist');
 
 /**
- * Import a `.ts` module that is generated data rather than real TypeScript.
+ * Import a `.ts` module that is a data literal rather than real TypeScript.
  *
  * src/fonts.ts and src/world.ts are megabyte-scale literals produced by the
- * build:fonts and build:map scripts. They are already valid JavaScript apart
- * from a type annotation and an `as const`, so stripping those two is cheaper
- * and far less fragile than pulling a TypeScript compiler into a script that
- * only needs two constants out of them.
+ * build:fonts and build:map scripts, and src/favicon.ts is a hand-written one.
+ * All three are already valid JavaScript apart from a type annotation and an
+ * `as const`, so stripping those two is cheaper and far less fragile than
+ * pulling a TypeScript compiler into a script that only needs three constants
+ * out of them.
  */
 async function importGenerated(file) {
   const source = (await readFile(join(root, 'src', file), 'utf8'))
@@ -53,9 +54,10 @@ async function mkdtempish() {
   return dir;
 }
 
-const [{ FONT_FACE_CSS, FONT_FILES }, { WORLD_GEOMETRY }] = await Promise.all([
+const [{ FONT_FACE_CSS, FONT_FILES }, { WORLD_GEOMETRY }, { FAVICON_SVG }] = await Promise.all([
   importGenerated('fonts.ts'),
   importGenerated('world.ts'),
+  importGenerated('favicon.ts'),
 ]);
 
 await rm(out, { recursive: true, force: true });
@@ -101,6 +103,10 @@ html = replaceOnce(
 );
 
 html = replaceOnce(html, '<title>Edgemetry</title>', '<title>Edgemetry — live demo</title>', 'the title');
+
+// A project site lives at /<repo>/, so the Worker's root-relative icon would
+// resolve to the top of github.io and 404. Same file, written next to the page.
+html = replaceOnce(html, 'href="/favicon.svg"', 'href="./favicon.svg"', 'the favicon link');
 
 /*
  * The content policy, which the Worker sets as a header and Pages cannot.
@@ -154,6 +160,8 @@ await copyFile(join(root, 'scripts', 'demo-mock.js'), join(out, 'demo-mock.js'))
 
 await writeFile(join(out, 'world.json'), JSON.stringify(WORLD_GEOMETRY));
 
+await writeFile(join(out, 'favicon.svg'), FAVICON_SVG);
+
 for (const [name, encoded] of Object.entries(FONT_FILES)) {
   await writeFile(join(out, 'fonts', name), Buffer.from(encoded, 'base64'));
 }
@@ -165,4 +173,4 @@ await writeFile(join(out, '.nojekyll'), '');
 
 const fonts = Object.keys(FONT_FILES).length;
 const kb = (Buffer.byteLength(html) / 1024).toFixed(0);
-console.log(`demo-dist/  index.html ${kb}kB · demo-mock.js · world.json · ${fonts} fonts`);
+console.log(`demo-dist/  index.html ${kb}kB · demo-mock.js · world.json · favicon.svg · ${fonts} fonts`);
