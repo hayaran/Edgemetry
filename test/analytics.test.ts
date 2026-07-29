@@ -851,6 +851,17 @@ describe('the update check', () => {
     expect(status.behind).toBe(2);
     expect(status.latest).toBe('v0.3.0');
     expect(status.url).toBe('https://github.com/hayaran/Edgemetry/releases/tag/v0.3.0');
+    // The feed still reaches back past this build, so the count is exact.
+    expect(status.atLeast).toBe(false);
+  });
+
+  it('treats a count as a floor when the feed no longer reaches this build', () => {
+    // GitHub serves a fixed number of entries. A build older than every one of
+    // them cannot know how many more scrolled off the end, and the console
+    // renders this as "3+ releases behind" rather than a number it invented.
+    const status = statusFrom(feed, 'v0.0.1');
+    expect(status.behind).toBe(3);
+    expect(status.atLeast).toBe(true);
   });
 
   it('reports an up-to-date build as behind by nothing', () => {

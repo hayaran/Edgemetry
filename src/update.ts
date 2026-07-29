@@ -38,6 +38,14 @@ export type UpdateStatus = {
   latest: string;
   /** How many releases sit between the two. Zero means up to date. */
   behind: number;
+  /**
+   * True when `behind` is a floor rather than a count.
+   *
+   * The feed carries only the most recent handful of releases, so an instance
+   * old enough that *every* entry is newer than it has no way to know how many
+   * more scrolled off the end. The console renders that as "10+".
+   */
+  atLeast: boolean;
   /** Where to read about them. */
   url: string;
   /** Unix seconds. Stale means the cron has not fired since a deploy. */
@@ -91,13 +99,18 @@ export function releaseTags(atom: string): string[] {
 
 /** What the feed means for a given build. Never throws on odd input. */
 export function statusFrom(atom: string, current: string = VERSION): UpdateStatus {
-  const newer = releaseTags(atom).filter((tag) => isNewer(tag, current));
+  const tags = releaseTags(atom);
+  const newer = tags.filter((tag) => isNewer(tag, current));
   const latest = newer.reduce((best, tag) => (isNewer(tag, best) ? tag : best), current);
 
   return {
     current,
     latest,
     behind: newer.length,
+    // Nothing in the feed is old enough to be this build, so the count is
+    // however many releases GitHub chose to include and the real answer is at
+    // least that. Saying "10" flat would be a number we cannot stand behind.
+    atLeast: newer.length > 0 && newer.length === tags.length,
     url: newer.length ? `${RELEASES_PAGE}/tag/${latest}` : RELEASES_PAGE,
     checked: Math.floor(Date.now() / 1000),
   };
@@ -149,6 +162,13 @@ export async function readUpdateStatus(db: D1Database): Promise<UpdateStatus | n
   if (typeof stored?.latest !== 'string') return null;
 
   return isNewer(stored.latest, VERSION)
-    ? { ...stored, current: VERSION }
-    : { ...stored, current: VERSION, latest: VERSION, behind: 0, url: RELEASES_PAGE };
+    ? { ...stored, current: VERSION, atLeast: stored.atLeast === true }
+    : {
+        ...stored,
+        current: VERSION,
+        latest: VERSION,
+        behind: 0,
+        atLeast: false,
+        url: RELEASES_PAGE,
+      };
 }
