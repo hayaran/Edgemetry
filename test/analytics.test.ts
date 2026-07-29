@@ -39,6 +39,7 @@ import {
 } from '../src/query';
 import { normalizeTrackerUrl } from '../src/index';
 import {
+  FEED_PAGE_SIZE,
   SETTING_UPDATE,
   checkForUpdate,
   isNewer,
@@ -855,12 +856,26 @@ describe('the update check', () => {
     expect(status.atLeast).toBe(false);
   });
 
-  it('treats a count as a floor when the feed no longer reaches this build', () => {
-    // GitHub serves a fixed number of entries. A build older than every one of
-    // them cannot know how many more scrolled off the end, and the console
-    // renders this as "3+ releases behind" rather than a number it invented.
+  it('counts exactly when a short feed is the whole history', () => {
+    // Every entry is newer than this build, but the feed is three releases
+    // long — nothing scrolled off the end, so there is nothing to hedge about.
     const status = statusFrom(feed, 'v0.0.1');
     expect(status.behind).toBe(3);
+    expect(status.atLeast).toBe(false);
+  });
+
+  it('treats a count as a floor when a full feed no longer reaches this build', () => {
+    // A full page means github.com stopped early, and a build older than every
+    // entry on it cannot know how many more are behind them. The console says
+    // "10+ releases behind" rather than a number it invented.
+    const entries = Array.from(
+      { length: FEED_PAGE_SIZE },
+      (_, i) =>
+        `<entry><link href="https://github.com/hayaran/Edgemetry/releases/tag/v1.${i}.0"/></entry>`,
+    ).join('');
+
+    const status = statusFrom(`<feed>${entries}</feed>`, 'v0.1.0');
+    expect(status.behind).toBe(FEED_PAGE_SIZE);
     expect(status.atLeast).toBe(true);
   });
 

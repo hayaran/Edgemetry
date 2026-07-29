@@ -31,6 +31,17 @@ const RELEASES_PAGE = 'https://github.com/hayaran/Edgemetry/releases';
 
 export const SETTING_UPDATE = 'update_status';
 
+/**
+ * How many entries github.com puts in a releases feed.
+ *
+ * It matters only for telling two situations apart that otherwise look
+ * identical: a feed where everything is newer than the running build because
+ * the history is longer than one page, and one where everything is newer
+ * because there are only two releases in the world. A short feed is the whole
+ * history, and the count taken from it is exact.
+ */
+export const FEED_PAGE_SIZE = 10;
+
 export type UpdateStatus = {
   /** What this build calls itself. */
   current: string;
@@ -107,10 +118,11 @@ export function statusFrom(atom: string, current: string = VERSION): UpdateStatu
     current,
     latest,
     behind: newer.length,
-    // Nothing in the feed is old enough to be this build, so the count is
-    // however many releases GitHub chose to include and the real answer is at
-    // least that. Saying "10" flat would be a number we cannot stand behind.
-    atLeast: newer.length > 0 && newer.length === tags.length,
+    // Nothing in the feed is old enough to be this build — but that only means
+    // the count is a floor if the feed was full. A repository with two releases
+    // total tells us everything there is to know, and "1+ releases behind"
+    // would be hedging against a page that was never truncated.
+    atLeast: newer.length > 0 && newer.length === tags.length && tags.length >= FEED_PAGE_SIZE,
     url: newer.length ? `${RELEASES_PAGE}/tag/${latest}` : RELEASES_PAGE,
     checked: Math.floor(Date.now() / 1000),
   };
