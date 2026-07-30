@@ -1,3 +1,17 @@
+<p align="center">
+  <img src=".github/assets/cover.png" alt="Edgemetry — privacy-first web analytics you run yourself, on one Cloudflare Worker and one D1 database" width="100%">
+</p>
+
+<p align="center">
+  <a href="https://github.com/hayaran/Edgemetry/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/hayaran/Edgemetry/ci.yml?branch=main&label=CI&style=flat-square&labelColor=1A1922" alt="CI"></a>
+  <a href="https://github.com/hayaran/Edgemetry/releases"><img src="https://img.shields.io/github/package-json/v/hayaran/Edgemetry?label=version&color=5B54E8&style=flat-square&labelColor=1A1922" alt="Version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square&labelColor=1A1922" alt="MIT license"></a>
+  <a href="https://workers.cloudflare.com/"><img src="https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-F38020?style=flat-square&logo=cloudflare&logoColor=white&labelColor=1A1922" alt="Runs on Cloudflare Workers"></a>
+  <img src="https://img.shields.io/badge/tracker-~2.1%20kB-5B54E8?style=flat-square&labelColor=1A1922" alt="Tracking script is about 2.1 kB">
+  <img src="https://img.shields.io/badge/cookies-none-12A594?style=flat-square&labelColor=1A1922" alt="No cookies">
+  <a href="https://hayaran.github.io/Edgemetry/"><img src="https://img.shields.io/badge/demo-live-12A594?style=flat-square&labelColor=1A1922" alt="Live demo"></a>
+</p>
+
 # Edgemetry
 
 Privacy-first web analytics you run yourself, on your own domain, on Cloudflare's
@@ -391,6 +405,25 @@ change the projection, the canvas or the fonts:
 npm run build:map     # src/world.ts   — Natural Earth 110m, Equal Earth projected
 npm run build:fonts   # src/fonts.ts   — Latin subsets of the three typefaces
 ```
+
+### The cover images
+
+The banner at the top of this file and the repository's social preview are
+generated too, from one layout that borrows the mark from `src/favicon.ts`, the
+dark palette from `src/dashboard.html` and the typefaces the Worker already
+ships — so the image cannot end up wearing colours or letterforms the console
+does not have. Headless Chrome does the rasterising; it is a dependency of this
+one script and of nothing else.
+
+```bash
+npm run build:cover   # .github/assets/cover.png   1280x440, the banner above
+                      # .github/assets/social.png  1280x640, the social preview
+```
+
+`social.png` has to be uploaded by hand once, under **Settings → General →
+Social preview** — it is repository metadata rather than a file in the tree, so
+nothing in the repo can set it for you. That is the image GitHub, Slack and
+every link unfurler show when someone shares the URL.
 
 ### The demo site
 
