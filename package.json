@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "seed": "node scripts/seed.mjs",
+    "build:cover": "node scripts/build-cover.mjs",
     "build:demo": "node scripts/build-demo.mjs",
     "build:map": "node scripts/build-map.mjs",
     "build:fonts": "node scripts/build-fonts.mjs"
