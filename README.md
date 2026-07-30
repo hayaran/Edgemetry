@@ -391,39 +391,23 @@ attribute is the opt-in, and you remove it on a real site.
 ### Automated tests
 
 ```bash
-npm test        # 38 tests, inside the real Workers runtime with a real D1
+npm test        # inside the real Workers runtime, against a real D1
 npm run typecheck
 ```
 
 ### Regenerating the bundled assets
 
 The dashboard's typefaces and its world map are generated files, checked in so
-that a clone builds without network access. Re-run these only if you want to
-change the projection, the canvas or the fonts:
+that a clone builds without network access; the images at the top of this file
+are made the same way, out of the mark and the palette the console already uses.
+Re-run these only if you want to change the projection, the canvas, the fonts or
+the banner:
 
 ```bash
 npm run build:map     # src/world.ts   — Natural Earth 110m, Equal Earth projected
 npm run build:fonts   # src/fonts.ts   — Latin subsets of the three typefaces
+npm run build:cover   # .github/assets — the banner above, and the social preview
 ```
-
-### The cover images
-
-The banner at the top of this file and the repository's social preview are
-generated too, from one layout that borrows the mark from `src/favicon.ts`, the
-dark palette from `src/dashboard.html` and the typefaces the Worker already
-ships — so the image cannot end up wearing colours or letterforms the console
-does not have. Headless Chrome does the rasterising; it is a dependency of this
-one script and of nothing else.
-
-```bash
-npm run build:cover   # .github/assets/cover.png   1280x440, the banner above
-                      # .github/assets/social.png  1280x640, the social preview
-```
-
-`social.png` has to be uploaded by hand once, under **Settings → General →
-Social preview** — it is repository metadata rather than a file in the tree, so
-nothing in the repo can set it for you. That is the image GitHub, Slack and
-every link unfurler show when someone shares the URL.
 
 ### The demo site
 
@@ -574,12 +558,10 @@ Being upfront about these:
 - **A GitHub or GitLab account is required for the deploy button**, because it
   copies the repository into your account to wire up CI/CD. The terminal route
   (`npx wrangler deploy`) does not need one.
-- **Updates are something you take, not something you get.** Your deployment runs
-  your copy of the repository, and the button imports rather than forks it, so
-  GitHub offers no Sync fork button to press. The account menu tells you when a
-  release is out and a workflow opens the pull request — two clicks and a merge,
-  covered under [Updating a deployment](#updating-a-deployment) — but neither
-  happens on its own.
+- **Updates are something you take, not something you get.** Nothing redeploys on
+  its own: the account menu tells you when a release is out and a workflow opens
+  the pull request, but merging it is yours to do — see
+  [Updating a deployment](#updating-a-deployment).
 - **Unique visitors over multi-day ranges are summed daily totals**, so a person
   visiting on Monday and Tuesday counts twice. This is unavoidable given a salt
   that rotates daily, and it is exactly what Plausible and GoatCounter do. Single
@@ -618,12 +600,13 @@ Being upfront about these:
 
 ## Roadmap
 
-- Sessions, bounce rate, and visit duration
+- Real sessions, so a visit can cross midnight and time on site can include the
+  last page of one
 - Public/shareable dashboards
-- Invite links and password reset by email (Cloudflare Email Routing)
 - Per-site timezone
 - CSV export
-- Email reports via Cloudflare Email Routing
+- Cloudflare Email Routing, for invite links, password resets and scheduled
+  reports
 
 ## Prior art
 
