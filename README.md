@@ -545,6 +545,31 @@ git remote add upstream https://github.com/hayaran/Edgemetry.git
 git fetch upstream main && git switch -c update && git reset --hard upstream/main && git reset --soft main && git commit -m "Update Edgemetry"
 ```
 
+### If your Worker is not called `edgemetry`
+
+A second deployment in the same account cannot reuse the name, so Cloudflare
+picks another one — usually your repository's. The Worker is then called
+something like `edgemetry-fork` while `wrangler.jsonc` still says `edgemetry`,
+and the dashboard offers to fix that by editing the file in your repository.
+
+Do not let it, and do not edit that line yourself. An update replaces every
+tracked file, so the name would revert on every release and you would be fixing
+it forever — the offered pull request included. Put the override where updates
+cannot reach it instead, under **Settings → Build → Deploy command**:
+
+```bash
+npx wrangler deploy --name edgemetry-fork
+```
+
+That setting lives in Cloudflare rather than in the repository, which is the
+same reason your database binding and custom domain survive updates.
+
+Worth doing even though the warning looks cosmetic. Builds are bound to the
+Worker they belong to and deploy correctly either way, but a `wrangler deploy`
+run by hand from a clone reads `name` out of the file — and in an account where
+the first instance *is* called `edgemetry`, that deploys your second instance
+straight over your first one.
+
 ### One footgun worth knowing
 
 On your first `wrangler deploy`, Wrangler writes the new `database_id` back into
