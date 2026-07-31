@@ -617,6 +617,11 @@ retention at 90 days and needs an API token pasted in at install time.
 Edgemetry uses D1, which keeps history indefinitely and needs no token,
 which is what makes true one-click deployment possible.
 
+## Author
+
+Built by Nitin Hayaran — [@nitinhayaran](https://x.com/nitinhayaran) on X, where
+I post about what goes into this.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
